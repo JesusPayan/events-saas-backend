@@ -4,7 +4,11 @@ from app.extensions import db
 
 class Tenant(db.Model):
     __tablename__ = "tenants"
-    id = db.Column(db.BigInteger, primary_key=True, autoincrement=True)
+    id = db.Column(
+    db.BigInteger().with_variant(db.Integer, "sqlite"),
+    primary_key=True,
+    autoincrement=True
+)
     name = db.Column(db.String(180), nullable=False)
     slug = db.Column(db.String(100), nullable=False, unique=True)
     status = db.Column(db.String(30), nullable=False, default="active")
