@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+
+from sqlalchemy import ForeignKeyConstraint, UniqueConstraint
 from app.extensions import db
 
 def now():
@@ -17,7 +19,18 @@ class Role(db.Model):
     id = db.Column(db.BigInteger().with_variant(db.Integer, "sqlite"), primary_key=True, autoincrement=True)
     tenant_id = db.Column(db.BigInteger, db.ForeignKey('tenants.id'), nullable=False)
     name = db.Column(db.String(60), nullable=False)
-    __table_args__ = (db.UniqueConstraint('tenant_id','name'), db.UniqueConstraint('tenant_id','id'),)
+    __table_args__ = (
+    db.UniqueConstraint(
+        'tenant_id',
+        'name',
+        name='uq_roles_tenant_name'
+    ),
+    db.UniqueConstraint(
+        'tenant_id',
+        'id',
+        name='uq_roles_tenant_id'
+    ),
+)
 
 class Permission(db.Model):
     __tablename__ = 'permissions'
@@ -37,6 +50,14 @@ class Membership(db.Model):
     role_id = db.Column(db.BigInteger, nullable=False)
     status = db.Column(db.String(20), nullable=False, default='active')
     __table_args__ = (
-        db.ForeignKeyConstraint(['tenant_id','role_id'],['roles.tenant_id','roles.id']),
-        db.UniqueConstraint('tenant_id','user_id'),
-    )
+    db.ForeignKeyConstraint(
+        ['tenant_id', 'role_id'],
+        ['roles.tenant_id', 'roles.id'],
+        name='fk_membership_role_same_tenant'
+    ),
+    db.UniqueConstraint(
+        'tenant_id',
+        'user_id',
+        name='uq_memberships_tenant_user'
+    ),
+)

@@ -7,66 +7,130 @@ from app.models import Tenant
 from app.models.identity import User, Role, Permission, RolePermission, Membership
 from app.security import authenticate, tenant_permission, issue_token
 from datetime import datetime, timedelta
+from flask import Blueprint, request, jsonify, g, current_app
 bp = Blueprint('auth', __name__)
 
 @bp.post('/auth/register')
+
+@bp.post('/auth/register')
 def register():
-    data = request.get_json(silent=True) or {}
-    print("Register request received:", data)
+    data = request.get_json(silent=True)
+
     if not isinstance(data, dict):
-        print("Invalid JSON data")
-        return jsonify(error="invalid_json"), 400
-   # Payan.202020
-    email = data.get("email", "")
-    password = data.get("password", "")
-    slug = data.get("slug", "")
-    name = data.get("company_name", "")
-    if not all(isinstance(v, str) for v in
-           (email, password, slug, name)):
-        print("Invalid registration data")
-        return jsonify(error="invalid_registration"), 400
+        return jsonify(error='invalid_json'), 400
+
+    email = data.get('email', '')
+    password = data.get('password', '')
+    slug = data.get('slug', '')
+    name = data.get('company_name', '')
+
+    if not all(
+        isinstance(value, str)
+        for value in (email, password, slug, name)
+    ):
+        return jsonify(error='invalid_registration'), 400
+
+    email = email.strip().lower()
+    slug = slug.strip().lower()
+    name = name.strip()
+
+    if (
+        not email
+        or not slug
+        or len(name) < 3
+        or len(password) < 12
+    ):
+        return jsonify(error='invalid_registration'), 400
+
     try:
-        #Creamos un nuevo tenant
-        tenant = Tenant(name=name, slug=slug, status='active')
-        print(f"Creating tenant: {tenant}")
-        #creamos un nuevo 
+        # 1. Crear empresa
+        tenant = Tenant(
+            name=name,
+            slug=slug,
+            status='active'
+        )
+
+        db.session.add(tenant)
+        db.session.flush()
+
+        # 2. Crear usuario
         user = User(
-            email=email, 
+            email=email,
             password_hash=generate_password_hash(password),
-            is_active = True,
-            created_at = datetime.now()
+            is_active=True,
+            created_at=datetime.now()
+        )
 
+        db.session.add(user)
+        db.session.flush()
+
+        # 3. Crear rol propietario
+        role = Role(
+            tenant_id=tenant.id,
+            name='owner'
+        )
+
+        db.session.add(role)
+        db.session.flush()
+
+        # 4. Asignar permisos iniciales
+        permission_codes = (
+            'tenant.read',
+            'members.read',
+            'clients.read',
+            'clients.create',
+            'clients.update'
+        )
+
+        for code in permission_codes:
+            permission = db.session.scalar(
+                select(Permission).where(
+                    Permission.code == code
+                )
             )
-        db.session.add(user) 
-        db.session.flush()
-        db.session.commit()
-        #and db.session.add(tenant):
-        #print("Registros Guardados Exitosamente")
 
-        db.session.add_all([tenant,user]); 
-        db.session.flush()
-        role = Role(tenant_id=tenant.id, name='owner'); db.session.add(role); db.session.flush()
-        for code in (
-    'tenant.read',
-    'members.read',
-    'clients.read',
-    'clients.create',
-    'clients.update'
-):
-            perm = db.session.scalar(select(Permission).where(Permission.code == code))
-            if perm is None:
-                perm = Permission(code=code); db.session.add(perm); db.session.flush()
-            db.session.add(RolePermission(role_id=role.id,permission_id=perm.id))
-        db.session.add(Membership(tenant_id=tenant.id,user_id=user.id,role_id=role.id))
+            if permission is None:
+                permission = Permission(code=code)
+                db.session.add(permission)
+                db.session.flush()
+
+            db.session.add(
+                RolePermission(
+                    role_id=role.id,
+                    permission_id=permission.id
+                )
+            )
+
+        # 5. Crear membresía
+        membership = Membership(
+            tenant_id=tenant.id,
+            user_id=user.id,
+            role_id=role.id
+        )
+
+        db.session.add(membership)
+
+        # 6. Confirmar toda la operación
         db.session.commit()
+
+        return jsonify(
+            user_id=user.id,
+            tenant_id=tenant.id
+        ), 201
+
     except IntegrityError:
         db.session.rollback()
+        current_app.logger.exception(
+            'Conflicto al registrar usuario y empresa'
+        )
         return jsonify(error='registration_conflict'), 409
+
     except Exception:
         db.session.rollback()
-        #current_app.logger.exception("Error al registrar empresa")
-        return jsonify(error="internal_server_error"), 500
-    return jsonify(user_id=user.id, tenant_id=tenant.id), 201
+        current_app.logger.exception(
+            'Error inesperado al registrar usuario y empresa'
+        )
+        return jsonify(error='internal_server_error'), 500
 
 @bp.post('/auth/login')
 def login():
