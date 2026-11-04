@@ -1,0 +1,408 @@
+
+from decimal import Decimal, InvalidOperation
+
+from flask import Blueprint, request, jsonify, g
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+
+from app.extensions import db
+from app.models.inventory_item import InventoryItem
+from app.models.inventory_category import InventoryCategory
+from app.security import tenant_permission
+
+bp = Blueprint("inventory", __name__)
+
+ALLOWED_FIELDS = {
+    "category_id", "sku", "name", "description",
+    "item_type", "quantity_total", "unit",
+    "replacement_cost", "rental_price"
+}
+
+
+def validate_item(data, partial=False):
+    if not isinstance(data, dict):
+        return {}, {"body": "invalid_json"}
+
+    errors = {}
+    cleaned = {}
+
+    for field in data:
+        if field not in ALLOWED_FIELDS:
+            errors[field] = "unknown_field"
+
+    for field in ALLOWED_FIELDS.intersection(data):
+        value = data[field]
+
+        if field == "category_id":
+            if value is None:
+                cleaned[field] = None
+            elif (
+                type(value) is not int
+                or value <= 0
+            ):
+                errors[field] = "invalid_category"
+            else:
+                cleaned[field] = value
+            continue
+
+        if field == "quantity_total":
+            if type(value) is not int or value < 0:
+                errors[field] = "invalid_quantity"
+            else:
+                cleaned[field] = value
+            continue
+
+        if field in ("replacement_cost", "rental_price"):
+            if value is None:
+                cleaned[field] = None
+                continue
+
+            if isinstance(value, bool) or not isinstance(
+                value, (str, int, float)
+            ):
+                errors[field] = "invalid_price"
+                continue
+
+            try:
+                amount = Decimal(str(value))
+                if (
+                    not amount.is_finite()
+                    or amount < 0
+                    or amount > Decimal("9999999999.99")
+                    or amount.as_tuple().exponent < -2
+                ):
+                    raise ValueError()
+
+                cleaned[field] = amount
+            except (InvalidOperation, ValueError):
+                errors[field] = "invalid_price"
+            continue
+
+        if value is not None and not isinstance(value, str):
+            errors[field] = "must_be_string"
+            continue
+
+        if isinstance(value, str):
+            value = value.strip()
+
+        cleaned[field] = value
+
+    lengths = {
+        "sku": 60,
+        "name": 180,
+        "unit": 30,
+        "item_type": 20
+    }
+
+    for field, limit in lengths.items():
+        if field in cleaned and cleaned[field] is not None:
+            if len(cleaned[field]) > limit:
+                errors[field] = "too_long"
+
+    if "item_type" in cleaned:
+        if cleaned["item_type"] not in ("product", "service"):
+            errors["item_type"] = "invalid_type"
+
+    if not partial:
+        for field in ("sku", "name"):
+            if not cleaned.get(field):
+                errors[field] = "required"
+
+    for field in ("sku", "name", "unit", "item_type"):
+        if field in cleaned and not cleaned[field]:
+            errors[field] = "required"
+
+    return cleaned, errors
+
+
+def get_item(item_id):
+    return db.session.scalar(
+        select(InventoryItem).where(
+            InventoryItem.id == item_id,
+            InventoryItem.tenant_id == g.tenant_id
+        )
+    )
+
+
+def category_exists(category_id):
+    if category_id is None:
+        return True
+
+    return db.session.scalar(
+        select(InventoryCategory.id).where(
+            InventoryCategory.id == category_id,
+            InventoryCategory.tenant_id == g.tenant_id,
+            InventoryCategory.is_active.is_(True)
+        )
+    ) is not None
+
+
+@bp.get("/inventory/categories")
+@tenant_permission("inventory.read")
+def list_categories():
+    categories = db.session.scalars(
+        select(InventoryCategory)
+        .where(
+            InventoryCategory.tenant_id == g.tenant_id,
+            InventoryCategory.is_active.is_(True)
+        )
+        .order_by(InventoryCategory.name)
+    ).all()
+
+    return jsonify([category.to_dict() for category in categories])
+
+
+@bp.get("/inventory/items")
+@tenant_permission("inventory.read")
+def list_items():
+    page = max(1, request.args.get("page", 1, type=int))
+    per_page = min(
+        100,
+        max(1, request.args.get("per_page", 20, type=int))
+    )
+
+    search = request.args.get("search", "").strip()
+
+    stmt = select(InventoryItem).where(
+        InventoryItem.tenant_id == g.tenant_id
+    )
+
+    if search:
+        stmt = stmt.where(
+            InventoryItem.name.ilike(f"%{search}%")
+            | InventoryItem.sku.ilike(f"%{search}%")
+        )
+
+    result = db.paginate(
+        stmt.order_by(InventoryItem.id.desc()),
+        page=page,
+        per_page=per_page,
+        error_out=False
+    )
+
+    return jsonify({
+        "items": [item.to_dict() for item in result.items],
+        "total": result.total,
+        "page": result.page,
+        "per_page": result.per_page,
+        "pages": result.pages
+    })
+
+
+@bp.post("/inventory/items")
+@tenant_permission("inventory.create")
+def create_item():
+    cleaned, errors = validate_item(
+        request.get_json(silent=True)
+    )
+
+    if errors:
+        return jsonify(error="validation_error", details=errors), 400
+
+    if not category_exists(cleaned.get("category_id")):
+        return jsonify(error="category_not_found"), 404
+
+    item = InventoryItem(
+        tenant_id=g.tenant_id,
+        **cleaned
+    )
+
+    try:
+        db.session.add(item)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(error="duplicate_sku_or_invalid_reference"), 409
+
+    return jsonify(item.to_dict()), 201
+
+
+@bp.get("/inventory/items/<int:item_id>")
+@tenant_permission("inventory.read")
+def get_inventory_item(item_id):
+    item = get_item(item_id)
+
+    if not item:
+        return jsonify(error="not_found"), 404
+
+    return jsonify(item.to_dict())
+
+
+@bp.patch("/inventory/items/<int:item_id>")
+@tenant_permission("inventory.update")
+def update_inventory_item(item_id):
+    item = get_item(item_id)
+
+    if not item:
+        return jsonify(error="not_found"), 404
+
+    cleaned, errors = validate_item(
+        request.get_json(silent=True),
+        partial=True
+    )
+
+    if errors:
+        return jsonify(error="validation_error", details=errors), 400
+
+    if (
+        "category_id" in cleaned
+        and not category_exists(cleaned["category_id"])
+    ):
+        return jsonify(error="category_not_found"), 404
+
+    for field, value in cleaned.items():
+        setattr(item, field, value)
+
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(error="duplicate_sku_or_invalid_reference"), 409
+
+    return jsonify(item.to_dict())
+
+
+@bp.patch("/inventory/items/<int:item_id>/deactivate")
+@tenant_permission("inventory.update")
+def deactivate_inventory_item(item_id):
+    item = get_item(item_id)
+
+    if not item:
+        return jsonify(error="not_found"), 404
+
+    item.is_active = False
+    db.session.commit()
+
+    return jsonify(item.to_dict())
+
+
+def validate_category(data, partial=False):
+    if not isinstance(data, dict):
+        return {}, {"body": "invalid_json"}
+
+    allowed = {"name", "description"}
+    cleaned = {}
+    errors = {}
+
+    for field in data:
+        if field not in allowed:
+            errors[field] = "unknown_field"
+
+    for field in allowed.intersection(data):
+        value = data[field]
+
+        if value is not None and not isinstance(value, str):
+            errors[field] = "must_be_string"
+            continue
+
+        if isinstance(value, str):
+            value = value.strip()
+
+        limit = 120 if field == "name" else 255
+
+        if value is not None and len(value) > limit:
+            errors[field] = "too_long"
+            continue
+
+        cleaned[field] = value
+
+    if not partial and not cleaned.get("name"):
+        errors["name"] = "required"
+
+    if "name" in cleaned and not cleaned["name"]:
+        errors["name"] = "required"
+
+    return cleaned, errors
+
+
+def get_category(category_id):
+    return db.session.scalar(
+        select(InventoryCategory).where(
+            InventoryCategory.id == category_id,
+            InventoryCategory.tenant_id == g.tenant_id
+        )
+    )
+
+
+@bp.post("/inventory/categories")
+@tenant_permission("inventory.create")
+def create_category():
+    cleaned, errors = validate_category(
+        request.get_json(silent=True)
+    )
+
+    if errors:
+        return jsonify(
+            error="validation_error",
+            details=errors
+        ), 400
+
+    category = InventoryCategory(
+        tenant_id=g.tenant_id,
+        **cleaned
+    )
+
+    try:
+        db.session.add(category)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(error="duplicate_category"), 409
+
+    return jsonify(category.to_dict()), 201
+
+
+@bp.get("/inventory/categories/<int:category_id>")
+@tenant_permission("inventory.read")
+def get_inventory_category(category_id):
+    category = get_category(category_id)
+
+    if not category:
+        return jsonify(error="not_found"), 404
+
+    return jsonify(category.to_dict())
+
+
+@bp.patch("/inventory/categories/<int:category_id>")
+@tenant_permission("inventory.update")
+def update_category(category_id):
+    category = get_category(category_id)
+
+    if not category:
+        return jsonify(error="not_found"), 404
+
+    cleaned, errors = validate_category(
+        request.get_json(silent=True),
+        partial=True
+    )
+
+    if errors:
+        return jsonify(
+            error="validation_error",
+            details=errors
+        ), 400
+
+    for field, value in cleaned.items():
+        setattr(category, field, value)
+
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(error="duplicate_category"), 409
+
+    return jsonify(category.to_dict())
+
+
+@bp.patch("/inventory/categories/<int:category_id>/deactivate")
+@tenant_permission("inventory.update")
+def deactivate_category(category_id):
+    category = get_category(category_id)
+
+    if not category:
+        return jsonify(error="not_found"), 404
+
+    category.is_active = False
+    db.session.commit()
+
+    return jsonify(category.to_dict())

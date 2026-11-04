@@ -1,0 +1,123 @@
+
+# from pathlib import Path
+# import os
+
+# from dotenv import load_dotenv
+# from flask import Confi, app, appg, Flask
+# from flask_sqlalchemy import SQLAlchemy
+# from flask_migrate import Migrate
+# from flask_cors import CORS
+# from flask_jwt_extended import JWTManager
+
+# # Extensiones
+# db = SQLAlchemy()
+# migrate = Migrate()
+# jwt_manager = JWTManager()
+
+
+# def create_app(config_override=None):
+
+#     # Directorio raíz del backend
+#     BASE_DIR = Path(__file__).resolve().parent.parent
+
+#     # Cargar variables de entorno
+#     load_dotenv(BASE_DIR / ".env")
+
+#     # Detectar entorno
+#     env = os.getenv("FLASK_ENV", "development").lower()
+
+#     print(f"Entorno: {env}")
+
+#     # Crear UNA sola instancia Flask
+#     app = Flask(__name__)
+
+#     # Cargar configuración base
+#     app.config.from_object("app.config.Config")
+#     if config_override:
+#            app.config.update(config_override)
+#     # Configuración por entorno
+#     if env == "development":
+#         db_url = os.getenv("DB_URL_DEV")
+#         upload_folder = os.getenv("UPLOAD_FOLDER_LOCAL")
+
+#     elif env == "test":
+#         db_url = os.getenv("DB_URL_TEST")
+#         upload_folder = os.getenv("UPLOAD_FOLDER_TEST")
+
+#     else:
+#         db_url = os.getenv("DB_URL_PROD")
+#         upload_folder = os.getenv("UPLOAD_FOLDER_PROD")
+
+#     # Validar conexión
+#     if not db_url:
+#         raise RuntimeError(
+#             f"No se configuró la URL de base de datos "
+#             f"para el entorno: {env}"
+#         )
+
+#     # Base de datos
+#     app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+#     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+#     # JWT
+#     jwt_secret = os.getenv("JWT_SECRET_KEY")
+
+#     if not jwt_secret:
+#         raise RuntimeError(
+#             "No se configuró JWT_SECRET_KEY"
+#         )
+
+#     app.config["JWT_SECRET_KEY"] = jwt_secret
+
+#     # Carpeta de archivos
+#     if not upload_folder:
+#         upload_folder = str(BASE_DIR / "uploads" / env)
+
+#     upload_path = Path(upload_folder).expanduser()
+
+#     if not upload_path.is_absolute():
+#         upload_path = BASE_DIR / upload_path
+
+#     upload_path.mkdir(
+#         parents=True,
+#         exist_ok=True
+#     )
+
+#     app.config["UPLOAD_FOLDER"] = str(upload_path)
+
+#     # Sobrescribir configuración opcional
+#     if config_override:
+#         app.config.update(config_override)
+
+#     # Inicializar extensiones
+#     db.init_app(app)
+#     migrate.init_app(app, db)
+#     jwt_manager.init_app(app)
+
+#     # CORS
+#     CORS(
+#         app,
+#         resources={
+#             r"/api/*": {
+#                 "origins": [
+#                     "http://localhost:4200"
+#                 ]
+#             }
+#         }
+#     )
+
+#     # Registrar modelos
+#     from app.models import Tenant  # noqa: F401
+
+#     # Registrar blueprints
+#     from app.api.health import bp as health_bp
+
+#     app.register_blueprint(
+#         health_bp,
+#         url_prefix="/api/v1"
+#     )
+
+#     print("Aplicación Flask inicializada")
+#     print(f"Carpeta de archivos: {upload_path}")
+
+#     return app

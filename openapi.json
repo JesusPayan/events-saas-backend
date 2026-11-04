@@ -1,0 +1,3452 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Eventos SaaS API",
+    "version": "0.3.0",
+    "description": "Especificación incremental de Eventos SaaS. Rutas confirmadas según listado Flask compartido; contratos detallados solo donde existe evidencia de código/pruebas. Los endpoints de alertas y auditoría agregados como provisionales requieren implementación o confirmación. Sprint 5.1: rutas de cotizaciones documentadas según implementación Flask compartida; pendientes pruebas de integración."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:5000",
+      "description": "Flask local"
+    },
+    {
+      "url": "http://127.0.0.1:4200",
+      "description": "Angular proxy"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Token devuelto por el login; no incluir prefijo Bearer al autorizar en Swagger."
+      },
+      "tenantHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Tenant-ID",
+        "description": "Empresa activa. Verificar si es requerido en cada ruta según decoradores."
+      }
+    },
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "inventory_capacity_conflict"
+          }
+        }
+      },
+      "ReservationInput": {
+        "type": "object",
+        "required": [
+          "inventory_item_id",
+          "quantity"
+        ],
+        "properties": {
+          "inventory_item_id": {
+            "type": "integer",
+            "minimum": 1,
+            "example": 6
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "example": 9
+          }
+        }
+      },
+      "Reservation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "example": 7
+          },
+          "tenant_id": {
+            "type": "integer"
+          },
+          "event_id": {
+            "type": "integer",
+            "example": 6
+          },
+          "inventory_item_id": {
+            "type": "integer",
+            "example": 6
+          },
+          "quantity": {
+            "type": "integer",
+            "example": 9
+          },
+          "status": {
+            "type": "string",
+            "example": "reserved"
+          }
+        }
+      },
+      "Availability": {
+        "type": "object",
+        "properties": {
+          "inventory_item_id": {
+            "type": "integer"
+          },
+          "quantity_total": {
+            "type": "integer"
+          },
+          "quantity_unavailable": {
+            "type": "integer"
+          },
+          "quantity_rentable": {
+            "type": "integer"
+          },
+          "quantity_reserved": {
+            "type": "integer"
+          },
+          "quantity_available": {
+            "type": "integer"
+          },
+          "inventory_shortage": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sku": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ReconcileInput": {
+        "type": "object",
+        "properties": {
+          "unit_cost": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0,
+            "example": 150
+          },
+          "accept_deficit": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReconciliationAudit": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "incident_id": {
+            "type": "integer"
+          },
+          "inventory_item_id": {
+            "type": "integer"
+          },
+          "quantity": {
+            "type": "integer"
+          },
+          "quantity_total_before": {
+            "type": "integer"
+          },
+          "quantity_total_after": {
+            "type": "integer"
+          },
+          "unavailable_before": {
+            "type": "integer"
+          },
+          "unavailable_after": {
+            "type": "integer"
+          },
+          "capacity_before": {
+            "type": "integer"
+          },
+          "capacity_after": {
+            "type": "integer"
+          },
+          "max_reserved": {
+            "type": "integer"
+          },
+          "shortage_after": {
+            "type": "integer"
+          },
+          "created_by": {
+            "type": "integer"
+          },
+          "adjustment_type": {
+            "type": "string",
+            "enum": [
+              "loss",
+              "quarantine"
+            ]
+          },
+          "unit_cost": {
+            "type": "string",
+            "example": "150.00"
+          },
+          "total_cost": {
+            "type": "string",
+            "example": "150.00"
+          },
+          "accepted_deficit": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ReconcileResult": {
+        "type": "object",
+        "properties": {
+          "incident": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "adjustment": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "charge": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "inventory": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "audit": {
+            "$ref": "#/components/schemas/ReconciliationAudit"
+          },
+          "capacity": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "quantity_unresolved": {
+            "type": "integer"
+          }
+        }
+      },
+      "QuoteItemInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "item_type",
+          "description",
+          "quantity",
+          "unit_price"
+        ],
+        "properties": {
+          "item_type": {
+            "type": "string",
+            "enum": [
+              "inventory",
+              "service",
+              "custom"
+            ]
+          },
+          "inventory_item_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "Obligatorio para inventory; omitido o null para service/custom."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "quantity": {
+            "oneOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              {
+                "type": "string",
+                "pattern": "^\\d+(\\.\\d{1,2})?$"
+              }
+            ],
+            "description": "Para inventory debe ser un entero positivo."
+          },
+          "unit_price": {
+            "type": "string",
+            "pattern": "^\\d+(\\.\\d{1,2})?$",
+            "example": "150.00",
+            "description": "Importe decimal expresado como cadena para evitar pérdida de precisión."
+          },
+          "discount_amount": {
+            "type": "string",
+            "pattern": "^\\d+(\\.\\d{1,2})?$",
+            "example": "150.00",
+            "description": "Importe decimal expresado como cadena para evitar pérdida de precisión."
+          },
+          "tax_rate": {
+            "oneOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              {
+                "type": "string",
+                "pattern": "^(0(\\.\\d{1,4})?|1(\\.0{1,4})?)$"
+              }
+            ],
+            "description": "Fracción del impuesto: 0.16 equivale a 16 %."
+          }
+        }
+      },
+      "QuoteCreateInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "client_id",
+          "event_id",
+          "items"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "event_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "valid_until": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
+          },
+          "terms_conditions": {
+            "type": "string",
+            "nullable": true
+          },
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/QuoteItemInput"
+            }
+          }
+        },
+        "example": {
+          "client_id": 1,
+          "event_id": 2,
+          "valid_until": "2026-11-20",
+          "notes": "Cotización de prueba",
+          "items": [
+            {
+              "item_type": "inventory",
+              "inventory_item_id": 3,
+              "description": "Renta de mesas redondas",
+              "quantity": 10,
+              "unit_price": "150.00",
+              "discount_amount": "0.00",
+              "tax_rate": "0.16"
+            },
+            {
+              "item_type": "service",
+              "description": "Servicio de montaje",
+              "quantity": 1,
+              "unit_price": "800.00",
+              "discount_amount": "0.00",
+              "tax_rate": "0.16"
+            }
+          ]
+        }
+      },
+      "QuoteItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "inventory_item_id": {
+            "type": "integer",
+            "nullable": true
+          },
+          "item_type": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "string"
+          },
+          "unit_price": {
+            "type": "string"
+          },
+          "discount_amount": {
+            "type": "string"
+          },
+          "tax_rate": {
+            "type": "string"
+          },
+          "subtotal": {
+            "type": "string"
+          },
+          "tax_amount": {
+            "type": "string"
+          },
+          "total": {
+            "type": "string"
+          },
+          "sort_order": {
+            "type": "integer"
+          }
+        }
+      },
+      "Quote": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "tenant_id": {
+            "type": "integer"
+          },
+          "client_id": {
+            "type": "integer"
+          },
+          "event_id": {
+            "type": "integer"
+          },
+          "quote_number": {
+            "type": "string",
+            "example": "COT-ABC123"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "sent",
+              "accepted",
+              "rejected",
+              "expired",
+              "cancelled",
+              "converted"
+            ]
+          },
+          "currency": {
+            "type": "string",
+            "example": "MXN"
+          },
+          "valid_until": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "subtotal": {
+            "type": "string",
+            "example": "2300.00"
+          },
+          "discount_total": {
+            "type": "string",
+            "example": "0.00"
+          },
+          "tax_total": {
+            "type": "string",
+            "example": "368.00"
+          },
+          "total": {
+            "type": "string",
+            "example": "2668.00"
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
+          },
+          "terms_conditions": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_by": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "QuoteDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Quote"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/QuoteItem"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "QuotePage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Quote"
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "page": {
+            "type": "integer"
+          },
+          "per_page": {
+            "type": "integer"
+          },
+          "pages": {
+            "type": "integer"
+          }
+        }
+      },
+      "QuoteValidationError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "validation_error"
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    "parameters": {
+      "TenantId": {
+        "name": "X-Tenant-ID",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "example": 1
+        }
+      }
+    },
+    "responses": {
+      "Error400": {
+        "description": "Solicitud inválida",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Error401": {
+        "description": "No autenticado",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Error403": {
+        "description": "Permisos insuficientes",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Error404": {
+        "description": "Recurso no encontrado",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Error409": {
+        "description": "Conflicto de negocio",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Error500": {
+        "description": "Error interno",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "tags": [
+          "Sistema"
+        ],
+        "summary": "Health",
+        "description": "Ruta confirmada en Flask routes.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/ready": {
+      "get": {
+        "tags": [
+          "Sistema"
+        ],
+        "summary": "Ready",
+        "description": "Ruta confirmada en Flask routes.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "tags": [
+          "Autenticación"
+        ],
+        "summary": "Registrar empresa y propietario",
+        "description": "Ruta confirmada en Flask routes.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "security": [],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "Autenticación"
+        ],
+        "summary": "Iniciar sesión",
+        "description": "Ruta confirmada en Flask routes.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "security": [],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "tags": [
+          "Autenticación"
+        ],
+        "summary": "Mi usuario",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/auth/permissions": {
+      "get": {
+        "tags": [
+          "Autenticación"
+        ],
+        "summary": "Permisos",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/tenants/current": {
+      "get": {
+        "tags": [
+          "Autenticación"
+        ],
+        "summary": "Empresa actual",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/memberships": {
+      "get": {
+        "tags": [
+          "Autenticación"
+        ],
+        "summary": "Membresías",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/clients": {
+      "get": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Listar clientes",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      },
+      "post": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Crear cliente",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/clients/{clientId}": {
+      "get": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Consultar cliente",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "clientId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      },
+      "patch": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Actualizar cliente",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "clientId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/clients/{clientId}/deactivate": {
+      "patch": {
+        "tags": [
+          "Clientes"
+        ],
+        "summary": "Desactivar cliente",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "clientId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "tags": [
+          "Eventos"
+        ],
+        "summary": "Listar eventos",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      },
+      "post": {
+        "tags": [
+          "Eventos"
+        ],
+        "summary": "Crear evento",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/events/calendar": {
+      "get": {
+        "tags": [
+          "Eventos"
+        ],
+        "summary": "Calendario",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/events/{eventId}": {
+      "get": {
+        "tags": [
+          "Eventos"
+        ],
+        "summary": "Consultar evento",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      },
+      "patch": {
+        "tags": [
+          "Eventos"
+        ],
+        "summary": "Actualizar evento",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/events/{eventId}/status": {
+      "patch": {
+        "tags": [
+          "Eventos"
+        ],
+        "summary": "Cambiar estado",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/categories": {
+      "get": {
+        "tags": [
+          "Inventario - Catálogo"
+        ],
+        "summary": "Listar categorías",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      },
+      "post": {
+        "tags": [
+          "Inventario - Catálogo"
+        ],
+        "summary": "Crear categoría",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/categories/{categoryId}": {
+      "get": {
+        "tags": [
+          "Inventario - Catálogo"
+        ],
+        "summary": "Consultar categoría",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "categoryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      },
+      "patch": {
+        "tags": [
+          "Inventario - Catálogo"
+        ],
+        "summary": "Actualizar categoría",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "categoryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/categories/{categoryId}/deactivate": {
+      "patch": {
+        "tags": [
+          "Inventario - Catálogo"
+        ],
+        "summary": "Desactivar categoría",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "categoryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/items": {
+      "get": {
+        "tags": [
+          "Inventario - Catálogo"
+        ],
+        "summary": "Listar artículos",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      },
+      "post": {
+        "tags": [
+          "Inventario - Catálogo"
+        ],
+        "summary": "Crear artículo",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/items/{itemId}": {
+      "get": {
+        "tags": [
+          "Inventario - Catálogo"
+        ],
+        "summary": "Consultar artículo",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      },
+      "patch": {
+        "tags": [
+          "Inventario - Catálogo"
+        ],
+        "summary": "Actualizar artículo",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/items/{itemId}/deactivate": {
+      "patch": {
+        "tags": [
+          "Inventario - Catálogo"
+        ],
+        "summary": "Desactivar artículo",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/availability": {
+      "get": {
+        "tags": [
+          "Inventario - Reservaciones"
+        ],
+        "summary": "Disponibilidad por fechas",
+        "description": "Las fechas deben ser ISO 8601 con zona horaria. La disponibilidad considera reservas que se superponen al periodo solicitado; las cantidades utilizables descuentan inventario no disponible. El backend es la autoridad final.",
+        "responses": {
+          "200": {
+            "description": "Capacidad para el periodo consultado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Availability"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 6
+          },
+          {
+            "name": "starts_at",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "example": "2026-12-10T17:00:00Z"
+          },
+          {
+            "name": "ends_at",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "example": "2026-12-12T01:00:00Z"
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/events/{eventId}/reservations": {
+      "get": {
+        "tags": [
+          "Inventario - Reservaciones"
+        ],
+        "summary": "Listar reservaciones",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      },
+      "post": {
+        "tags": [
+          "Inventario - Reservaciones"
+        ],
+        "summary": "Crear o actualizar reservación",
+        "description": "La API debe comprobar capacidad en backend, también en actualizaciones. En pruebas del evento 6, POST actualizó la reservación 7 de 8 a 9 sin duplicarla. Confirmar contrato general en el controlador.",
+        "responses": {
+          "200": {
+            "description": "Reservación guardada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reservation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de capacidad; la operación no debe modificar la reserva",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReservationInput"
+              },
+              "examples": {
+                "valid": {
+                  "summary": "Actualizar 8 a 9 unidades",
+                  "value": {
+                    "inventory_item_id": 6,
+                    "quantity": 9
+                  }
+                },
+                "overCapacity": {
+                  "summary": "Prueba negativa: 11 unidades con capacidad 10",
+                  "value": {
+                    "inventory_item_id": 6,
+                    "quantity": 11
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/events/{eventId}/reservations/{reservationId}/cancel": {
+      "patch": {
+        "tags": [
+          "Inventario - Reservaciones"
+        ],
+        "summary": "Cancelar reservación",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "reservationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/movements": {
+      "get": {
+        "tags": [
+          "Inventario - Movimientos"
+        ],
+        "summary": "Listar movimientos",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/movements/dispatch": {
+      "post": {
+        "tags": [
+          "Inventario - Movimientos"
+        ],
+        "summary": "Registrar entrega",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/movements/return": {
+      "post": {
+        "tags": [
+          "Inventario - Movimientos"
+        ],
+        "summary": "Registrar devolución",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/operations/calendar": {
+      "get": {
+        "tags": [
+          "Inventario - Operaciones"
+        ],
+        "summary": "Calendario operativo",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/operations/pending-dispatches": {
+      "get": {
+        "tags": [
+          "Inventario - Operaciones"
+        ],
+        "summary": "Entregas pendientes",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/operations/pending-returns": {
+      "get": {
+        "tags": [
+          "Inventario - Operaciones"
+        ],
+        "summary": "Devoluciones pendientes",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/operations/summary": {
+      "get": {
+        "tags": [
+          "Inventario - Operaciones"
+        ],
+        "summary": "Resumen de operaciones",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/incidents": {
+      "get": {
+        "tags": [
+          "Inventario - Incidencias"
+        ],
+        "summary": "Listar incidencias",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "reservation_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      },
+      "post": {
+        "tags": [
+          "Inventario - Incidencias"
+        ],
+        "summary": "Registrar incidencia",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "reservation_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/incidents/{incidentId}": {
+      "get": {
+        "tags": [
+          "Inventario - Incidencias"
+        ],
+        "summary": "Consultar incidencia",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "incidentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/incidents/{incidentId}/reconcile": {
+      "post": {
+        "tags": [
+          "Inventario - Incidencias"
+        ],
+        "summary": "Conciliar incidencia",
+        "description": "**Reglas verificadas en servicio de conciliación disponible:** lost/missing descuenta quantity_total, damaged aumenta quantity_unavailable; la capacidad utilizable es total menos no disponible. Se calcula shortage_after=max(0,max_reserved-capacity_after). Si es positivo y accept_deficit=false, retorna 409 inventory_capacity_conflict. Si accept_deficit=true, registra ajuste, cargo pendiente MXN, auditoría y sincroniza alertas en la transacción. Rechaza incidencias ya conciliadas y cantidades superiores a movimientos pendientes/devueltos. Costos: no negativos, máximo dos decimales, límite monetario 9999999999.99.",
+        "responses": {
+          "200": {
+            "description": "Incidencia conciliada, ajuste, cargo y auditoría creados",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconcileResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_json, invalid_accept_deficit, invalid_unit_cost, unit_cost_required, invalid_incident_quantity, invalid_incident_type o total_cost_out_of_range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "inventory_capacity_conflict, incident_not_reconcilable, incident_already_adjusted, loss_exceeds_outstanding, damage_exceeds_returned, stock_below_quarantined o quarantine_exceeds_stock",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "incidentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconcileInput"
+              },
+              "examples": {
+                "withoutDeficit": {
+                  "summary": "Conciliación sin aceptación de déficit",
+                  "value": {
+                    "unit_cost": 150,
+                    "accept_deficit": false
+                  }
+                },
+                "acceptedDeficit": {
+                  "summary": "Aceptación explícita del déficit",
+                  "value": {
+                    "unit_cost": 150,
+                    "accept_deficit": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/incidents/{incidentId}/charges": {
+      "get": {
+        "tags": [
+          "Inventario - Incidencias"
+        ],
+        "summary": "Cargos de incidencia",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "incidentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/charges": {
+      "get": {
+        "tags": [
+          "Inventario - Cargos"
+        ],
+        "summary": "Listar cargos",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/charges/{chargeId}/approve": {
+      "post": {
+        "tags": [
+          "Inventario - Cargos"
+        ],
+        "summary": "Aprobar cargo",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "chargeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/charges/{chargeId}/pay": {
+      "post": {
+        "tags": [
+          "Inventario - Cargos"
+        ],
+        "summary": "Marcar cargo pagado",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "chargeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/charges/{chargeId}/waive": {
+      "post": {
+        "tags": [
+          "Inventario - Cargos"
+        ],
+        "summary": "Condonar cargo",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "chargeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Esquema por confirmar en implementación Flask."
+              }
+            }
+          }
+        },
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/charges/{chargeId}/audit": {
+      "get": {
+        "tags": [
+          "Inventario - Cargos"
+        ],
+        "summary": "Auditoría del cargo",
+        "description": "Ruta confirmada en Flask routes.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "chargeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "x-documentation-status": "route-confirmed-contract-partial"
+      }
+    },
+    "/api/v1/inventory/capacity-alerts": {
+      "get": {
+        "tags": [
+          "Déficit y auditoría"
+        ],
+        "summary": "Alertas de capacidad (verificar ruta)",
+        "description": "Ruta observada en frontend; confirmar registro de Blueprint.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "x-documentation-status": "route-unconfirmed"
+      }
+    },
+    "/api/v1/inventory/reconciliation-audits": {
+      "get": {
+        "tags": [
+          "Déficit y auditoría"
+        ],
+        "summary": "Auditorías de conciliación (verificar ruta)",
+        "description": "Ruta observada en frontend; confirmar registro de Blueprint.\n\n**Documentación parcial:** los contratos no verificados deben contrastarse con la implementación Flask.",
+        "responses": {
+          "200": {
+            "description": "Respuesta exitosa (estructura por documentar)"
+          },
+          "400": {
+            "description": "Solicitud inválida"
+          },
+          "401": {
+            "description": "No autenticado"
+          },
+          "403": {
+            "description": "Permiso insuficiente"
+          },
+          "409": {
+            "description": "Conflicto de negocio"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "x-documentation-status": "route-unconfirmed"
+      }
+    },
+    "/api/v1/quotes": {
+      "get": {
+        "tags": [
+          "Cotizaciones"
+        ],
+        "summary": "Listar cotizaciones",
+        "description": "Permiso requerido: quotes.read. Listado restringido a X-Tenant-ID.",
+        "operationId": "listQuotes",
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Listado paginado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuotePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON o datos inválidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuoteValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente o inválido"
+          },
+          "403": {
+            "description": "Sin membresía activa o permiso insuficiente"
+          },
+          "404": {
+            "description": "Registro no encontrado en el tenant"
+          },
+          "409": {
+            "description": "Conflicto o referencia inválida"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Cotizaciones"
+        ],
+        "summary": "Crear cotización en borrador",
+        "description": "Permiso requerido: quotes.create. Valida cliente, evento y artículos del mismo tenant. No reserva inventario. Importes calculados por backend.",
+        "operationId": "createQuote",
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuoteCreateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Cotización creada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuoteDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON o datos inválidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuoteValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente o inválido"
+          },
+          "403": {
+            "description": "Sin membresía activa o permiso insuficiente"
+          },
+          "404": {
+            "description": "Registro no encontrado en el tenant"
+          },
+          "409": {
+            "description": "Conflicto o referencia inválida"
+          }
+        }
+      }
+    },
+    "/api/v1/quotes/{quoteId}": {
+      "get": {
+        "tags": [
+          "Cotizaciones"
+        ],
+        "summary": "Consultar cotización",
+        "description": "Permiso requerido: quotes.read. Incluye conceptos; restringido al tenant activo.",
+        "operationId": "getQuote",
+        "security": [
+          {
+            "bearerAuth": [],
+            "tenantHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "quoteId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cotización con conceptos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuoteDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "JSON o datos inválidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuoteValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente o inválido"
+          },
+          "403": {
+            "description": "Sin membresía activa o permiso insuficiente"
+          },
+          "404": {
+            "description": "Registro no encontrado en el tenant"
+          },
+          "409": {
+            "description": "Conflicto o referencia inválida"
+          }
+        }
+      }
+    }
+  }
+}
