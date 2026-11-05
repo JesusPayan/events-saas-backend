@@ -60,4 +60,4 @@ class Membership(db.Model):
         'user_id',
         name='uq_memberships_tenant_user'
     ),
-)
+)    

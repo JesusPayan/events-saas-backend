@@ -12,10 +12,10 @@ class InventoryCapacityAlertEvent(db.Model):
     __tablename__ = "inventory_capacity_alert_events"
 
     id = db.Column(
-        db.BigInteger,
-        primary_key=True,
-        autoincrement=True
-    )
+            db.BigInteger().with_variant(db.Integer, "sqlite"),
+            primary_key=True,
+            autoincrement=True
+            )
 
     tenant_id = db.Column(
         db.BigInteger,

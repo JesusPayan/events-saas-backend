@@ -21,20 +21,24 @@ bp = Blueprint("inventory_charges", __name__)
 
 
 def execute_action(charge_id, action):
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify(error="invalid_json"), 400
+
     try:
         result = change_charge_status(
             tenant_id=g.tenant_id,
             charge_id=charge_id,
             user_id=g.user.id,
             action=action,
-            data=request.get_json(silent=True) or {}
+            data=data
         )
 
         return jsonify(result), 200
 
     except ChargeError as exc:
         return jsonify(error=exc.code), exc.status
-
 
 @bp.get("/inventory/charges")
 @tenant_permission("inventory.read")

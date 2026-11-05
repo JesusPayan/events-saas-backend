@@ -75,14 +75,31 @@ def register():
 
         # 4. Asignar permisos iniciales
         permission_codes = (
+            # Empresa
             "tenant.read",
+
+            # Miembros
             "members.read",
+
+            # Clientes
             "clients.read",
             "clients.create",
             "clients.update",
+
+            # Eventos
             "events.read",
             "events.create",
             "events.update",
+
+            # Inventario
+            "inventory.read",
+            "inventory.create",
+            "inventory.update",
+            "inventory.adjust",
+
+            # Cargos
+            "inventory.charges.approve",
+            "inventory.charges.pay",
         )
 
         for code in permission_codes:
