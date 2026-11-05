@@ -6,13 +6,13 @@ class InventoryCategory(db.Model):
     __tablename__ = "inventory_categories"
 
     id = db.Column(
-        db.BigInteger,
-        primary_key=True,
-        autoincrement=True
+    db.BigInteger().with_variant(db.Integer, "sqlite"),
+    primary_key=True,
+    autoincrement=True
     )
 
     tenant_id = db.Column(
-        db.BigInteger,
+        db.BigInteger().with_variant(db.Integer, "sqlite"),
         db.ForeignKey("tenants.id"),
         nullable=False,
         index=True

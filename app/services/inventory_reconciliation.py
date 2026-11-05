@@ -216,7 +216,13 @@ def reconcile_incident(tenant_id, incident_id, user_id, payload):
         db.session.flush()
 
         # Persistir/actualizar alertas dentro de la misma transacción.
-        capacity_result = synchronize_capacity_alerts(tenant_id, item.id)
+        capacity_result = synchronize_capacity_alerts(
+    tenant_id=tenant_id,
+    item_id=item.id,
+    source_type="reconciliation",
+    source_id=incident.id,
+    created_by=user_id
+)
         db.session.flush()
 
         result = {
