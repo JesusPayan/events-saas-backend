@@ -10,7 +10,11 @@ def utc_now():
 class Event(db.Model):
     __tablename__ = "events"
 
-    id = db.Column(db.BigInteger, primary_key=True, autoincrement=True)
+    id = db.Column(
+    db.BigInteger().with_variant(db.Integer, "sqlite"),
+    primary_key=True,
+    autoincrement=True
+)
 
     tenant_id = db.Column(
         db.BigInteger,
