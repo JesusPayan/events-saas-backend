@@ -235,7 +235,7 @@ def reconcile_incident(tenant_id, incident_id, user_id, payload):
         db.session.add_all([adjustment, charge, audit])
         db.session.flush()
 
-        # Persistir/actualizar alertas dentro de la misma transacción.
+        # Sincronizar alertas dentro de la misma transacción.
         capacity_result = synchronize_capacity_alerts(
                     tenant_id=tenant_id,
                     item_id=item.id,
