@@ -3,6 +3,7 @@
 Ejecutar: python -m pytest tests/test_inventory_reconciliation_integration.py -v
 """
 from decimal import Decimal
+from urllib import response
 
 import pytest
 from app.extensions import db
@@ -126,8 +127,8 @@ def test_repeated_reconciliation_does_not_duplicate_records(reservation_data):
     incident_id, _, _ = setup_case(d, 'lost')
     assert reconcile(d, incident_id).status_code == 200
     response = reconcile(d, incident_id)
-    assert response.status_code == 409, response.get_json()
-    assert response.get_json()['error'] == 'incident_not_reconcilable'
+    assert response.status_code == 409
+    assert response.get_json()["error"] == "incident_already_reconciled"
     assert_records(incident_id)
 
 

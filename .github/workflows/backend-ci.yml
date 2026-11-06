@@ -63,7 +63,80 @@ jobs:
       - name: Run migrations
         run: |
           python -m flask --app "app:create_app" db upgrade
+      - name: Start Flask test server
+        run: |
+          nohup python -m flask --app "app:create_app" run \
+            --host 127.0.0.1 \
+            --port 5001 \
+            --no-reload \
+            --with-threads \
+            > flask-test.log 2>&1 &
+      - name: Start Flask test server
+        run: |
+          nohup python -m flask --app "app:create_app" run \
+            --host 127.0.0.1 \
+            --port 5001 \
+            --no-reload \
+            --with-threads \
+            > flask-test.log 2>&1 &
+
+      - name: Wait for Flask API
+        run: |
+          python - <<'PY'
+          import time
+          import requests
+
+          url = "http://127.0.0.1:5001/api/v1/health"
+
+          for attempt in range(30):
+              try:
+                  response = requests.get(url, timeout=2)
+                  if response.status_code == 200:
+                      print("Flask API disponible")
+                      break
+              except requests.RequestException:
+                  pass
+
+              time.sleep(1)
+          else:
+              raise SystemExit("Flask API no inició correctamente")
+          PY
+
+      - name: Run unit and integration tests
+        run: |
+          python -m pytest -q
+
+      - name: Upload Flask logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flask-test-logs
+          path: flask-test.log
+          if-no-files-found: ignore
+      - name: Wait for Flask API
+        run: |
+          python - <<'PY'
+          import time
+          import requests
+
+          url = "http://127.0.0.1:5001/api/v1/health"
+
+          for attempt in range(30):
+              try:
+                  response = requests.get(url, timeout=2)
+                  if response.status_code == 200:
+                      print("Flask API disponible")
+                      break
+              except requests.RequestException:
+                  pass
+
+              time.sleep(1)
+          else:
+              raise SystemExit("Flask API no inició correctamente")
+          PY
 
       - name: Run unit tests
         run: |
           python -m pytest -q
+      
+      

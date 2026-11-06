@@ -95,9 +95,24 @@ def reconcile_incident(tenant_id, incident_id, user_id, payload):
             ).with_for_update()
         )
         if incident is None:
-            raise ReconciliationError("incident_not_found", 404)
+            raise ReconciliationError(
+        "incident_not_found",
+        404
+        )
+
+        # Una incidencia resuelta no debe generar
+        # nuevamente ajustes ni cargos.
+        if incident.status == "resolved":
+            raise ReconciliationError(
+                "incident_already_reconciled",
+                409
+            )
+
         if incident.status not in ("reported", "assessed"):
-            raise ReconciliationError("incident_not_reconcilable")
+            raise ReconciliationError(
+                "incident_not_reconcilable",
+                409
+            )
 
         existing = db.session.scalar(
             select(InventoryAdjustment.id).where(
@@ -106,7 +121,10 @@ def reconcile_incident(tenant_id, incident_id, user_id, payload):
             )
         )
         if existing is not None:
-            raise ReconciliationError("incident_already_adjusted")
+            raise ReconciliationError(
+        "incident_already_adjusted",
+        409
+    )
 
         summary = get_movement_summary(tenant_id, reservation.id)
         returned = int(summary["quantity_returned"])
@@ -216,30 +234,38 @@ def reconcile_incident(tenant_id, incident_id, user_id, payload):
         db.session.flush()
 
         # Persistir/actualizar alertas dentro de la misma transacción.
+        # Actualizar alertas dentro de la misma transacción.
         capacity_result = synchronize_capacity_alerts(
-    tenant_id=tenant_id,
-    item_id=item.id,
-    source_type="reconciliation",
-    source_id=incident.id,
-    created_by=user_id
-)
+            tenant_id=tenant_id,
+            item_id=item.id,
+            source_type="reconciliation",
+            source_id=incident.id,
+            created_by=user_id,
+        )
+
         db.session.flush()
 
         result = {
-        "incident": serialize_model(incident),
-        "adjustment": serialize_model(adjustment),
-        "charge": serialize_model(charge),
-        "inventory": serialize_model(item),
-        "audit": serialize_model(audit),
-        "capacity": capacity_result,
-        "quantity_unresolved": max(
-            0,
-            administrative_outstanding
-            - (quantity if adjustment_type == "loss" else 0),
-        ),
-    }
+            "incident": serialize_model(incident),
+            "adjustment": serialize_model(adjustment),
+            "charge": serialize_model(charge),
+            "inventory": serialize_model(item),
+            "audit": serialize_model(audit),
+            "capacity": capacity_result,
+            "quantity_unresolved": max(
+                0,
+                administrative_outstanding
+                - (
+                    quantity
+                    if adjustment_type == "loss"
+                    else 0
+                ),
+            ),
+        }
+
         db.session.commit()
         return result
+
     except Exception:
         db.session.rollback()
         raise
