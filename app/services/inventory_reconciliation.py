@@ -300,7 +300,6 @@ def reconcile_incident(tenant_id, incident_id, user_id, payload):
         )
         raise
 
-
     except Exception:
         db.session.rollback()
         current_app.logger.exception(
