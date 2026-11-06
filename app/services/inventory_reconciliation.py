@@ -21,6 +21,7 @@ from app.services.inventory_capacity_control import (
     get_item_capacity,
     synchronize_capacity_alerts,
 )
+from sqlalchemy.exc import OperationalError
 
 MAX_MONEY = Decimal("9999999999.99")
 
@@ -95,9 +96,24 @@ def reconcile_incident(tenant_id, incident_id, user_id, payload):
             ).with_for_update()
         )
         if incident is None:
-            raise ReconciliationError("incident_not_found", 404)
+            raise ReconciliationError(
+        "incident_not_found",
+        404
+        )
+
+        # Una incidencia resuelta no debe generar
+        # nuevamente ajustes ni cargos.
+        if incident.status == "resolved":
+            raise ReconciliationError(
+                "incident_already_reconciled",
+                409
+            )
+
         if incident.status not in ("reported", "assessed"):
-            raise ReconciliationError("incident_not_reconcilable")
+            raise ReconciliationError(
+                "incident_not_reconcilable",
+                409
+            )
 
         existing = db.session.scalar(
             select(InventoryAdjustment.id).where(
@@ -106,7 +122,10 @@ def reconcile_incident(tenant_id, incident_id, user_id, payload):
             )
         )
         if existing is not None:
-            raise ReconciliationError("incident_already_adjusted")
+            raise ReconciliationError(
+        "incident_already_adjusted",
+        409
+    )
 
         summary = get_movement_summary(tenant_id, reservation.id)
         returned = int(summary["quantity_returned"])
@@ -212,31 +231,86 @@ def reconcile_incident(tenant_id, incident_id, user_id, payload):
             accepted_deficit=bool(shortage_after > 0 and accept_deficit),
             reason=incident.description, created_by=user_id,
         )
+        
         db.session.add_all([adjustment, charge, audit])
         db.session.flush()
 
-        # Persistir/actualizar alertas dentro de la misma transacción.
-        capacity_result = synchronize_capacity_alerts(tenant_id, item.id)
+        # Sincronizar alertas dentro de la misma transacción.
+        capacity_result = synchronize_capacity_alerts(
+                    tenant_id=tenant_id,
+                    item_id=item.id,
+                    source_type="reconciliation",
+                    source_id=incident.id,
+                    created_by=user_id,
+                )
+
+
         db.session.flush()
 
         result = {
-        "incident": serialize_model(incident),
-        "adjustment": serialize_model(adjustment),
-        "charge": serialize_model(charge),
-        "inventory": serialize_model(item),
-        "audit": serialize_model(audit),
-        "capacity": capacity_result,
-        "quantity_unresolved": max(
-            0,
-            administrative_outstanding
-            - (quantity if adjustment_type == "loss" else 0),
-        ),
-    }
+                "incident": serialize_model(incident),
+                "adjustment": serialize_model(adjustment),
+                "charge": serialize_model(charge),
+                "inventory": serialize_model(item),
+                "audit": serialize_model(audit),
+                "capacity": capacity_result,
+                "quantity_unresolved": max(
+                    0,
+                    administrative_outstanding
+                    - (
+                    quantity
+                    if adjustment_type == "loss"
+                    else 0
+                ),
+                ),
+            }
+
+
         db.session.commit()
         return result
+
+    except OperationalError as exc:
+        db.session.rollback()
+
+        mysql_code = (
+            exc.orig.args[0]
+            if getattr(exc, "orig", None)
+            and getattr(exc.orig, "args", None)
+            else None
+        )
+
+        if mysql_code in (1205, 1213):
+            current_app.logger.warning(
+                "Inventory reconciliation concurrency conflict: "
+                "tenant=%s incident=%s mysql_code=%s",
+                tenant_id,
+                incident_id,
+                mysql_code,
+            )
+            raise ReconciliationError(
+                "inventory_concurrency_conflict",
+                409,
+            ) from exc
+
+        current_app.logger.exception(
+            "Inventory reconciliation database error: "
+            "tenant=%s incident=%s",
+            tenant_id,
+            incident_id,
+        )
+        raise
+
     except Exception:
         db.session.rollback()
+        current_app.logger.exception(
+            "Inventory reconciliation failed: "
+            "tenant=%s incident=%s",
+            tenant_id,
+            incident_id,
+        )
         raise
+
+
 def serialize_model(instance):
     result = {}
 
@@ -251,3 +325,4 @@ def serialize_model(instance):
         result[column.name] = value
 
     return result
+

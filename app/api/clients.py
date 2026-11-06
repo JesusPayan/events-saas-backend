@@ -5,7 +5,7 @@ from app.extensions import db
 from app.models.crm import Client
 from app.schemas.clients import validate_client
 from app.security import tenant_permission
-
+#hola
 bp = Blueprint("clients", __name__)
 
 

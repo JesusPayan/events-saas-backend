@@ -10,9 +10,13 @@ def utc_now():
 class InventoryReconciliationAudit(db.Model):
     __tablename__ = "inventory_reconciliation_audits"
 
-    id = db.Column(db.BigInteger, primary_key=True, autoincrement=True)
+    id = db.Column(
+        db.BigInteger().with_variant(db.Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True
+        )
     tenant_id = db.Column(
-        db.BigInteger, db.ForeignKey("tenants.id"), nullable=False
+        db.BigInteger().with_variant(db.Integer, "sqlite"), db.ForeignKey("tenants.id"), nullable=False
     )
     incident_id = db.Column(db.BigInteger, nullable=False)
     inventory_item_id = db.Column(db.BigInteger, nullable=False)

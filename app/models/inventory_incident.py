@@ -12,10 +12,10 @@ class InventoryIncident(db.Model):
     __tablename__ = "inventory_incidents"
 
     id = db.Column(
-        db.BigInteger,
-        primary_key=True,
-        autoincrement=True
-    )
+    db.BigInteger().with_variant(db.Integer, "sqlite"),
+    primary_key=True,
+    autoincrement=True
+)
 
     tenant_id = db.Column(
         db.BigInteger,

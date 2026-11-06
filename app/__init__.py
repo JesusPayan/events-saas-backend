@@ -47,7 +47,10 @@ def create_app(config_override=None):
     app = Flask(__name__)
 
     app.config.from_object("app.config.Config")
-
+    app.config["CHECK_DB_ON_STARTUP"] = (
+        os.getenv("CHECK_DB_ON_STARTUP", "true").lower()
+        in ("true", "1", "yes")
+    )
     # ==============================================
     # 3. CONFIGURACIÓN POR ENTORNO
     # ==============================================
