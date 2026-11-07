@@ -322,14 +322,12 @@ def create_reservation(event_id):
         db.session.rollback()
 
         return jsonify(
-    error="pending_reconciliation",
-    message=(
-        "No es posible cancelar la reservación "
-        "porque existen artículos pendientes "
-        "de devolución o conciliación."
-    ),
-    quantity_outstanding=outstanding
-), 409
+        error="reservation_conflict",
+        message=(
+            "No fue posible guardar la reservación "
+            "debido a un conflicto de integridad."
+        )
+    ), 409
 
     except Exception:
         db.session.rollback()

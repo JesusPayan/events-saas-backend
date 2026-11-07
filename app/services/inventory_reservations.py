@@ -17,26 +17,28 @@ def validate_date_range(starts_at, ends_at):
     if ends_at <= starts_at:
         raise ValueError("invalid_date_range")
 
-
 def get_reserved_quantity(
     tenant_id,
     item_id,
     starts_at,
     ends_at,
-    exclude_event_id=None
+    exclude_event_id=None,
 ):
+    """
+    Calcula las unidades reservadas mediante una
+    lectura actual con bloqueo en MySQL/InnoDB.
+
+    Debe ejecutarse dentro de la misma transacción
+    que mantiene bloqueado InventoryItem.
+    """
+
     validate_date_range(starts_at, ends_at)
 
     query = (
-        select(
-            func.coalesce(
-                func.sum(InventoryReservation.quantity),
-                0
-            )
-        )
+        select(InventoryReservation.quantity)
         .join(
             Event,
-            Event.id == InventoryReservation.event_id
+            Event.id == InventoryReservation.event_id,
         )
         .where(
             InventoryReservation.tenant_id == tenant_id,
@@ -45,7 +47,7 @@ def get_reserved_quantity(
             InventoryReservation.status.in_(BLOCKING_STATUSES),
             Event.status != "cancelled",
             Event.starts_at < ends_at,
-            Event.ends_at > starts_at
+            Event.ends_at > starts_at,
         )
     )
 
@@ -54,8 +56,14 @@ def get_reserved_quantity(
             InventoryReservation.event_id != exclude_event_id
         )
 
-    return int(db.session.scalar(query) or 0)
+    quantities = db.session.scalars(
+        query.with_for_update()
+    ).all()
 
+    return sum(
+        int(quantity)
+        for quantity in quantities
+    )
 
 def get_availability(
     tenant_id,
