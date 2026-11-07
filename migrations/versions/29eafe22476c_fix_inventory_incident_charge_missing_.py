@@ -1,130 +1,73 @@
+
 """fix inventory incident charge missing fields
+
 Revision ID: 29eafe22476c
 Revises: 75cb39d33f1b
 """
+
 from alembic import op
 import sqlalchemy as sa
 
-
-
-
-revision = '29eafe22476c'
+revision = "29eafe22476c"
 down_revision = "75cb39d33f1b"
 branch_labels = None
 depends_on = None
 
+TABLE = "inventory_incident_charges"
+FK_NAME = "fk_incident_charge_waived_by"
+
+COLUMNS = [
+    ("approved_at", sa.DateTime()),
+    ("paid_at", sa.DateTime()),
+    ("payment_reference", sa.String(120)),
+    ("payment_method", sa.String(30)),
+    ("waived_by", sa.BigInteger()),
+    ("waived_at", sa.DateTime()),
+    ("resolution_notes", sa.Text()),
+]
+
+
+def existing_columns():
+    return {
+        column["name"]
+        for column in sa.inspect(op.get_bind()).get_columns(TABLE)
+    }
+
+
+def waived_by_foreign_keys():
+    return [
+        fk for fk in sa.inspect(op.get_bind()).get_foreign_keys(TABLE)
+        if fk.get("referred_table") == "users"
+        and fk.get("constrained_columns") == ["waived_by"]
+        and fk.get("referred_columns") == ["id"]
+    ]
+
 
 def upgrade():
-    op.add_column(
-        "inventory_incident_charges",
-        sa.Column(
-            "approved_at",
-            sa.DateTime(),
-            nullable=True,
-        ),
-    )
+    columns = existing_columns()
 
-    op.add_column(
-        "inventory_incident_charges",
-        sa.Column(
-            "paid_at",
-            sa.DateTime(),
-            nullable=True,
-        ),
-    )
+    for name, column_type in COLUMNS:
+        if name not in columns:
+            op.add_column(
+                TABLE,
+                sa.Column(name, column_type, nullable=True),
+            )
 
-    op.add_column(
-        "inventory_incident_charges",
-        sa.Column(
-            "payment_reference",
-            sa.String(length=120),
-            nullable=True,
-        ),
-    )
-
-    op.add_column(
-        "inventory_incident_charges",
-        sa.Column(
-            "payment_method",
-            sa.String(length=30),
-            nullable=True,
-        ),
-    )
-
-    op.add_column(
-        "inventory_incident_charges",
-        sa.Column(
-            "waived_by",
-            sa.BigInteger(),
-            nullable=True,
-        ),
-    )
-
-    op.add_column(
-        "inventory_incident_charges",
-        sa.Column(
-            "waived_at",
-            sa.DateTime(),
-            nullable=True,
-        ),
-    )
-
-    op.add_column(
-        "inventory_incident_charges",
-        sa.Column(
-            "resolution_notes",
-            sa.Text(),
-            nullable=True,
-        ),
-    )
-
-    op.create_foreign_key(
-        "fk_incident_charge_waived_by",
-        "inventory_incident_charges",
-        "users",
-        ["waived_by"],
-        ["id"],
-    )
+    if not waived_by_foreign_keys():
+        op.create_foreign_key(
+            FK_NAME,
+            TABLE,
+            "users",
+            ["waived_by"],
+            ["id"],
+        )
 
 
 def downgrade():
-    op.drop_constraint(
-        "fk_incident_charge_waived_by",
-        "inventory_incident_charges",
-        type_="foreignkey",
-    )
-
-    op.drop_column(
-        "inventory_incident_charges",
-        "resolution_notes",
-    )
-
-    op.drop_column(
-        "inventory_incident_charges",
-        "waived_at",
-    )
-
-    op.drop_column(
-        "inventory_incident_charges",
-        "waived_by",
-    )
-
-    op.drop_column(
-        "inventory_incident_charges",
-        "payment_method",
-    )
-
-    op.drop_column(
-        "inventory_incident_charges",
-        "payment_reference",
-    )
-
-    op.drop_column(
-        "inventory_incident_charges",
-        "paid_at",
-    )
-
-    op.drop_column(
-        "inventory_incident_charges",
-        "approved_at",
+    # No eliminar columnas compartidas con la otra rama.
+    # La reversión de esta revisión requiere una estrategia
+    # específica según las revisiones aplicadas.
+    raise RuntimeError(
+        "Downgrade de 29eafe22476c no soportado "
+        "sin reconciliar las ramas de migraciones."
     )
