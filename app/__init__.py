@@ -17,6 +17,9 @@ from app.models.inventory_charge_audit import InventoryChargeAudit
 from app.api.inventory_charges import bp as inventory_charges_bp
 from flask_swagger_ui import get_swaggerui_blueprint
 from app.swagger import init_swagger
+
+from app.models.api_idempotency_key import ApiIdempotencyKey
+from app.models.inventory_reservation_audit import InventoryReservationAudit
 def create_app(config_override=None):
 
     # ==============================================
