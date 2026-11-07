@@ -131,10 +131,9 @@ def test_context(flask_app):
             # --------------------------------------------------
 
             required_permissions = (
-                "inventory.adjust",
-                "inventory.create",
                 "inventory.create",
                 "inventory.update",
+                "inventory.read",
             )
 
             for permission_code in required_permissions:
