@@ -9,7 +9,30 @@ from app.extensions import db
 from app.models.inventory_item import InventoryItem
 from app.models.inventory_category import InventoryCategory
 from app.security import tenant_permission
+from app.services.inventory_movement_reporting import (
+    get_movement_report,
+)
+from datetime import datetime, timezone
 
+from app.services.inventory_reporting import get_availability_report
+from flask import Response
+
+from datetime import datetime, timezone
+from flask import Response
+
+from app.services.inventory_report_export import (
+    export_movement_report_csv,
+    export_availability_report_csv,
+)
+
+
+from flask import Response, g, jsonify, request
+from datetime import datetime, timezone
+
+from app.services.inventory_report_export import (
+    export_movement_report_excel,
+    export_availability_report_excel,
+)
 bp = Blueprint("inventory", __name__)
 
 ALLOWED_FIELDS = {
@@ -17,6 +40,117 @@ ALLOWED_FIELDS = {
     "item_type", "quantity_total", "unit",
     "replacement_cost", "rental_price"
 }
+
+@bp.get("/inventory/reports/movements/export")
+@tenant_permission("inventory.read")
+def inventory_movement_report_export():
+    try:
+        raw_from = request.args.get("date_from")
+        raw_to = request.args.get("date_to")
+
+        date_from = (
+            parse_report_datetime(raw_from)
+            if raw_from is not None
+            else None
+        )
+
+        date_to = (
+            parse_report_datetime(raw_to)
+            if raw_to is not None
+            else None
+        )
+
+        event_id = parse_positive_int("event_id")
+        item_id = parse_positive_int("item_id")
+
+        movement_type = request.args.get("movement_type")
+
+        csv_content = export_movement_report_csv(
+            tenant_id=g.tenant_id,
+            date_from=date_from,
+            date_to=date_to,
+            event_id=event_id,
+            item_id=item_id,
+            movement_type=movement_type,
+        )
+
+        filename = (
+            "inventory_movements_"
+            + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            + ".csv"
+        )
+
+        return Response(
+            "\ufeff" + csv_content,
+            status=200,
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{filename}"'
+                ),
+                "Cache-Control": "no-store",
+            },
+        )
+
+    except ValueError as exc:
+        return jsonify(
+            error="validation_error",
+            detail=str(exc),
+        ), 400
+
+@bp.get("/inventory/reports/availability/export")
+@tenant_permission("inventory.read")
+def inventory_availability_report_export():
+    try:
+        starts_at = parse_report_datetime(
+            request.args.get("starts_at")
+        )
+
+        ends_at = parse_report_datetime(
+            request.args.get("ends_at")
+        )
+
+        category_id = parse_positive_int("category_id")
+        item_id = parse_positive_int("item_id")
+
+        search = request.args.get("search", "").strip()
+
+        if len(search) > 180:
+            raise ValueError("invalid_search")
+
+        csv_content = export_availability_report_csv(
+            tenant_id=g.tenant_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            category_id=category_id,
+            item_id=item_id,
+            search=search,
+        )
+
+        filename = (
+            "inventory_availability_"
+            + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            + ".csv"
+        )
+
+        return Response(
+            "\ufeff" + csv_content,
+            status=200,
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{filename}"'
+                ),
+                "Cache-Control": "no-store",
+            },
+        )
+
+    except ValueError as exc:
+        return jsonify(
+            error="validation_error",
+            detail=str(exc),
+        ), 400
+
 
 
 def validate_item(data, partial=False):
@@ -406,3 +540,249 @@ def deactivate_category(category_id):
     db.session.commit()
 
     return jsonify(category.to_dict())
+
+def parse_report_datetime(value):
+    if not value:
+        raise ValueError("date_range_required")
+
+    try:
+        parsed = datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise ValueError("invalid_datetime") from exc
+
+    if parsed.tzinfo is None:
+        raise ValueError("timezone_required")
+
+    return parsed.astimezone(
+        timezone.utc
+    ).replace(tzinfo=None)
+
+
+def parse_positive_int(name, default=None, maximum=None):
+    raw = request.args.get(name)
+
+    if raw is None:
+        return default
+
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid_{name}") from exc
+
+    if value <= 0 or (maximum is not None and value > maximum):
+        raise ValueError(f"invalid_{name}")
+
+    return value
+
+
+@bp.get("/inventory/reports/availability")
+@tenant_permission("inventory.read")
+def inventory_availability_report():
+    try:
+        starts_at = parse_report_datetime(
+            request.args.get("starts_at")
+        )
+        ends_at = parse_report_datetime(
+            request.args.get("ends_at")
+        )
+
+        category_id = parse_positive_int("category_id")
+        item_id = parse_positive_int("item_id")
+        page = parse_positive_int("page", default=1)
+        per_page = parse_positive_int(
+            "per_page", default=20, maximum=100
+        )
+
+        search = request.args.get("search", "").strip()
+
+        if len(search) > 180:
+            raise ValueError("invalid_search")
+
+        result = get_availability_report(
+            tenant_id=g.tenant_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            category_id=category_id,
+            item_id=item_id,
+            search=search,
+            page=page,
+            per_page=per_page,
+        )
+
+        return jsonify(result), 200
+
+    except ValueError as exc:
+        return jsonify(
+            error="validation_error",
+            detail=str(exc),
+        ), 400
+
+
+
+@bp.get("/inventory/reports/movements")
+@tenant_permission("inventory.read")
+def inventory_movement_report():
+    try:
+        raw_from = request.args.get("date_from")
+        raw_to = request.args.get("date_to")
+
+        date_from = (
+            parse_report_datetime(raw_from)
+            if raw_from is not None
+            else None
+        )
+
+        date_to = (
+            parse_report_datetime(raw_to)
+            if raw_to is not None
+            else None
+        )
+
+        event_id = parse_positive_int("event_id")
+        item_id = parse_positive_int("item_id")
+        page = parse_positive_int("page", default=1)
+        per_page = parse_positive_int(
+            "per_page",
+            default=20,
+            maximum=100,
+        )
+
+        movement_type = request.args.get("movement_type")
+
+        result = get_movement_report(
+            tenant_id=g.tenant_id,
+            date_from=date_from,
+            date_to=date_to,
+            event_id=event_id,
+            item_id=item_id,
+            movement_type=movement_type,
+            page=page,
+            per_page=per_page,
+        )
+
+        return jsonify(result), 200
+
+    except ValueError as exc:
+        return jsonify(
+            error="validation_error",
+            detail=str(exc),
+        ), 400
+
+EXCEL_MIMETYPE = (
+    "application/vnd.openxmlformats-officedocument."
+    "spreadsheetml.sheet"
+)
+
+
+@bp.get("/inventory/reports/movements/export.xlsx")
+@tenant_permission("inventory.read")
+def inventory_movement_report_excel_export():
+    try:
+        raw_from = request.args.get("date_from")
+        raw_to = request.args.get("date_to")
+
+        date_from = (
+            parse_report_datetime(raw_from)
+            if raw_from is not None
+            else None
+        )
+
+        date_to = (
+            parse_report_datetime(raw_to)
+            if raw_to is not None
+            else None
+        )
+
+        event_id = parse_positive_int("event_id")
+        item_id = parse_positive_int("item_id")
+
+        movement_type = request.args.get("movement_type")
+
+        content = export_movement_report_excel(
+            tenant_id=g.tenant_id,
+            date_from=date_from,
+            date_to=date_to,
+            event_id=event_id,
+            item_id=item_id,
+            movement_type=movement_type,
+        )
+
+        timestamp = datetime.now(
+            timezone.utc
+        ).strftime("%Y%m%d_%H%M%S")
+
+        return Response(
+            content,
+            status=200,
+            mimetype=EXCEL_MIMETYPE,
+            headers={
+                "Content-Disposition": (
+                    'attachment; filename='
+                    f'"inventory_movements_{timestamp}.xlsx"'
+                ),
+                "Cache-Control": "no-store",
+            },
+        )
+
+    except ValueError as exc:
+        return jsonify(
+            error="validation_error",
+            detail=str(exc),
+        ), 400
+
+
+@bp.get("/inventory/reports/availability/export.xlsx")
+@tenant_permission("inventory.read")
+def inventory_availability_report_excel_export():
+    try:
+        starts_at = parse_report_datetime(
+            request.args.get("starts_at")
+        )
+
+        ends_at = parse_report_datetime(
+            request.args.get("ends_at")
+        )
+
+        category_id = parse_positive_int("category_id")
+        item_id = parse_positive_int("item_id")
+
+        search = request.args.get(
+            "search", ""
+        ).strip()
+
+        if len(search) > 180:
+            raise ValueError("invalid_search")
+
+        content = export_availability_report_excel(
+            tenant_id=g.tenant_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            category_id=category_id,
+            item_id=item_id,
+            search=search,
+        )
+
+        timestamp = datetime.now(
+            timezone.utc
+        ).strftime("%Y%m%d_%H%M%S")
+
+        return Response(
+            content,
+            status=200,
+            mimetype=EXCEL_MIMETYPE,
+            headers={
+                "Content-Disposition": (
+                    'attachment; filename='
+                    f'"inventory_availability_{timestamp}.xlsx"'
+                ),
+                "Cache-Control": "no-store",
+            },
+        )
+
+    except ValueError as exc:
+        return jsonify(
+            error="validation_error",
+            detail=str(exc),
+        ), 400
