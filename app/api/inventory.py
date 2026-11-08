@@ -10,6 +10,10 @@ from app.models.inventory_item import InventoryItem
 from app.models.inventory_category import InventoryCategory
 from app.security import tenant_permission
 
+from datetime import datetime, timezone
+
+from app.services.inventory_reporting import get_availability_report
+
 bp = Blueprint("inventory", __name__)
 
 ALLOWED_FIELDS = {
@@ -406,3 +410,81 @@ def deactivate_category(category_id):
     db.session.commit()
 
     return jsonify(category.to_dict())
+
+def parse_report_datetime(value):
+    if not value:
+        raise ValueError("date_range_required")
+
+    try:
+        parsed = datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise ValueError("invalid_datetime") from exc
+
+    if parsed.tzinfo is None:
+        raise ValueError("timezone_required")
+
+    return parsed.astimezone(
+        timezone.utc
+    ).replace(tzinfo=None)
+
+
+def parse_positive_int(name, default=None, maximum=None):
+    raw = request.args.get(name)
+
+    if raw is None:
+        return default
+
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid_{name}") from exc
+
+    if value <= 0 or (maximum is not None and value > maximum):
+        raise ValueError(f"invalid_{name}")
+
+    return value
+
+
+@bp.get("/inventory/reports/availability")
+@tenant_permission("inventory.read")
+def inventory_availability_report():
+    try:
+        starts_at = parse_report_datetime(
+            request.args.get("starts_at")
+        )
+        ends_at = parse_report_datetime(
+            request.args.get("ends_at")
+        )
+
+        category_id = parse_positive_int("category_id")
+        item_id = parse_positive_int("item_id")
+        page = parse_positive_int("page", default=1)
+        per_page = parse_positive_int(
+            "per_page", default=20, maximum=100
+        )
+
+        search = request.args.get("search", "").strip()
+
+        if len(search) > 180:
+            raise ValueError("invalid_search")
+
+        result = get_availability_report(
+            tenant_id=g.tenant_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            category_id=category_id,
+            item_id=item_id,
+            search=search,
+            page=page,
+            per_page=per_page,
+        )
+
+        return jsonify(result), 200
+
+    except ValueError as exc:
+        return jsonify(
+            error="validation_error",
+            detail=str(exc),
+        ), 400
