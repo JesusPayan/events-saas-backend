@@ -1,156 +1,16 @@
-# name: Backend CI
-
-# on:
-#   workflow_dispatch:
-
-#   push:
-#     branches:
-#       - master
-#       - develop
-#       - "feature/**"
-#       - "fix/**"
-
-#   pull_request:
-#     branches:
-#       - master
-#       - develop
-
-# jobs:
-#   test:
-#     name: Flask + MySQL + Pytest
-#     runs-on: ubuntu-latest
-
-#     services:
-#       mysql:
-#         image: mysql:8.0
-#         env:
-#           MYSQL_ROOT_PASSWORD: test_password
-#           MYSQL_DATABASE: crm_events_test
-#         ports:
-#           - 3306:3306
-#         options: >-
-#           --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -ptest_password"
-#           --health-interval=10s
-#           --health-timeout=5s
-#           --health-retries=15
-
-#     env:
-#       FLASK_ENV: test
-#       DB_URL_TEST: mysql+pymysql://root:test_password@127.0.0.1:3306/crm_events_test
-#       JWT_SECRET_KEY: ci_jwt_secret_only_for_testing
-#       SECRET_KEY: ci_session_secret_only_for_testing
-#       UPLOAD_FOLDER_TEST: uploads/test
-#       CHECK_DB_ON_STARTUP: "true"
-
-#     steps:
-#       - name: Checkout
-#         uses: actions/checkout@v4
-
-#       - name: Setup Python
-#         uses: actions/setup-python@v5
-#         with:
-#           python-version: "3.13"
-
-#       - name: Install dependencies
-#         run: |
-#           python -m pip install --upgrade pip
-#           pip install -r requirements-ci.txt
-
-#       - name: Validate Flask application
-#         run: |
-#           python -m flask --app "app:create_app" routes
-
-#       - name: Run migrations
-#         run: |
-#           python -m flask --app "app:create_app" db upgrade
-#       - name: Start Flask test server
-#         run: |
-#           nohup python -m flask --app "app:create_app" run \
-#             --host 127.0.0.1 \
-#             --port 5001 \
-#             --no-reload \
-#             --with-threads \
-#             > flask-test.log 2>&1 &
-#       - name: Start Flask test server
-#         run: |
-#           nohup python -m flask --app "app:create_app" run \
-#             --host 127.0.0.1 \
-#             --port 5001 \
-#             --no-reload \
-#             --with-threads \
-#             > flask-test.log 2>&1 &
-
-#       - name: Wait for Flask API
-#         run: |
-#           python - <<'PY'
-#           import time
-#           import requests
-
-#           url = "http://127.0.0.1:5001/api/v1/health"
-
-#           for attempt in range(30):
-#               try:
-#                   response = requests.get(url, timeout=2)
-#                   if response.status_code == 200:
-#                       print("Flask API disponible")
-#                       break
-#               except requests.RequestException:
-#                   pass
-
-#               time.sleep(1)
-#           else:
-#               raise SystemExit("Flask API no inició correctamente")
-#           PY
-
-#       - name: Run unit and integration tests
-#         run: |
-#           python -m pytest -q
-
-#       - name: Upload Flask logs on failure
-#         if: failure()
-#         uses: actions/upload-artifact@v4
-#         with:
-#           name: flask-test-logs
-#           path: flask-test.log
-#           if-no-files-found: ignore
-#       - name: Wait for Flask API
-#         run: |
-#           python - <<'PY'
-#           import time
-#           import requests
-
-#           url = "http://127.0.0.1:5001/api/v1/health"
-
-#           for attempt in range(30):
-#               try:
-#                   response = requests.get(url, timeout=2)
-#                   if response.status_code == 200:
-#                       print("Flask API disponible")
-#                       break
-#               except requests.RequestException:
-#                   pass
-
-#               time.sleep(1)
-#           else:
-#               raise SystemExit("Flask API no inició correctamente")
-#           PY
-
-#       - name: Run unit tests
-#         run: |
-#           python -m pytest -q
-      
-      
 
 name: Backend CI
 
 on:
   workflow_dispatch:
+
   push:
     branches:
       - master
       - develop
       - "feature/**"
       - "fix/**"
+
   pull_request:
     branches:
       - master
@@ -197,12 +57,21 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: requirements-ci.txt
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ci.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
           python -m pip install -r requirements-ci.txt
+          python -m pip check
+
+      - name: Verify Excel dependency
+        run: |
+          python -m pip show openpyxl
+          python -c "from openpyxl import Workbook; print('openpyxl OK')"
 
       - name: Validate Flask application
         run: |

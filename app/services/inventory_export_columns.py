@@ -1,0 +1,27 @@
+MOVEMENT_EXPORT_COLUMNS = [
+    ("movement_id", "ID Movimiento"),
+    ("reservation_id", "ID Reservacion"),
+    ("inventory_item_id", "ID Articulo"),
+    ("event_id", "ID Evento"),
+    ("sku", "SKU"),
+    ("item_name", "Articulo"),
+    ("movement_type", "Tipo Movimiento"),
+    ("quantity", "Cantidad"),
+    ("notes", "Observaciones"),
+    ("created_by", "Registrado Por"),
+    ("created_at", "Fecha Movimiento"),
+]
+AVAILABILITY_EXPORT_COLUMNS = [
+    ("inventory_item_id", "ID Articulo"),
+    ("category_id", "ID Categoria"),
+    ("sku", "SKU"),
+    ("name", "Articulo"),
+    ("unit", "Unidad"),
+    ("is_active", "Activo"),
+    ("quantity_total", "Cantidad Total"),
+    ("quantity_unavailable", "Cantidad No Disponible"),
+    ("quantity_rentable", "Cantidad Rentable"),
+    ("quantity_reserved", "Cantidad Reservada"),
+    ("quantity_available", "Cantidad Disponible"),
+    ("inventory_shortage", "Deficit Inventario"),
+]
