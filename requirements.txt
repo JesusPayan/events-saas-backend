@@ -39,7 +39,7 @@ python-dotenv==1.1.0
 pytweening==1.2.0
 pytz==2025.2
 pywhatkit==5.4
-pywin32==310
+pywin32==310; sys_platform == "win32"
 requests==2.32.4
 schedule==1.2.2
 selenium==4.32.0
