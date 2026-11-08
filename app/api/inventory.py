@@ -9,7 +9,9 @@ from app.extensions import db
 from app.models.inventory_item import InventoryItem
 from app.models.inventory_category import InventoryCategory
 from app.security import tenant_permission
-
+from app.services.inventory_movement_reporting import (
+    get_movement_report,
+)
 from datetime import datetime, timezone
 
 from app.services.inventory_reporting import get_availability_report
@@ -477,6 +479,57 @@ def inventory_availability_report():
             category_id=category_id,
             item_id=item_id,
             search=search,
+            page=page,
+            per_page=per_page,
+        )
+
+        return jsonify(result), 200
+
+    except ValueError as exc:
+        return jsonify(
+            error="validation_error",
+            detail=str(exc),
+        ), 400
+
+
+
+@bp.get("/inventory/reports/movements")
+@tenant_permission("inventory.read")
+def inventory_movement_report():
+    try:
+        raw_from = request.args.get("date_from")
+        raw_to = request.args.get("date_to")
+
+        date_from = (
+            parse_report_datetime(raw_from)
+            if raw_from is not None
+            else None
+        )
+
+        date_to = (
+            parse_report_datetime(raw_to)
+            if raw_to is not None
+            else None
+        )
+
+        event_id = parse_positive_int("event_id")
+        item_id = parse_positive_int("item_id")
+        page = parse_positive_int("page", default=1)
+        per_page = parse_positive_int(
+            "per_page",
+            default=20,
+            maximum=100,
+        )
+
+        movement_type = request.args.get("movement_type")
+
+        result = get_movement_report(
+            tenant_id=g.tenant_id,
+            date_from=date_from,
+            date_to=date_to,
+            event_id=event_id,
+            item_id=item_id,
+            movement_type=movement_type,
             page=page,
             per_page=per_page,
         )
