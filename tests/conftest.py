@@ -255,7 +255,7 @@ def reconciliation_scenario(flask_app, test_context):
     if (
         parsed.scheme != "http"
         or parsed.hostname not in ("127.0.0.1", "localhost")
-        or parsed.port != 5001
+        or parsed.port not in (5001, 5002)
         or parsed.path != "/api/v1"
     ):
         pytest.fail(
