@@ -7,7 +7,9 @@ from app.extensions import db
 from app.models.logistics_order import LogisticsOrder
 from app.models.logistics_order_item import LogisticsOrderItem
 from app.models.inventory_reservation import InventoryReservation
+from sqlalchemy import select
 
+from app.models.event import Event
 
 class LogisticsError(Exception):
     def __init__(self, message, status_code=400):
@@ -15,49 +17,77 @@ class LogisticsError(Exception):
         self.status_code = status_code
 
 
-def create_order(tenant_id, event_id, user_id, scheduled_at=None, notes=None):
-    # Evitar órdenes activas duplicadas por evento.
-    # Para concurrencia real, complementar con una restricción
-    # o mecanismo de bloqueo transaccional.
-    existing = LogisticsOrder.query.filter(
-        LogisticsOrder.tenant_id == tenant_id,
-        LogisticsOrder.event_id == event_id,
-        LogisticsOrder.status != "cancelled",
-    ).first()
-
-    if existing:
-        raise LogisticsError(
-            "El evento ya tiene una orden logística activa",
-            409,
-        )
-
-    reservations = InventoryReservation.query.filter_by(
-        tenant_id=tenant_id,
-        event_id=event_id,
-        status="reserved",
-    ).all()
-
-    if not reservations:
-        raise LogisticsError(
-            "El evento no tiene reservas activas de inventario",
-            400,
-        )
-
-    quantities = defaultdict(int)
-
-    for reservation in reservations:
-        quantities[reservation.inventory_item_id] += reservation.quantity
-
-    order = LogisticsOrder(
-        tenant_id=tenant_id,
-        event_id=event_id,
-        created_by=user_id,
-        scheduled_at=scheduled_at,
-        notes=notes,
-        status="pending",
-    )
-
+def create_order(
+    tenant_id,
+    event_id,
+    user_id,
+    scheduled_at=None,
+    notes=None,
+):
     try:
+        # Serializar la creación por evento.
+        event = db.session.scalar(
+            select(Event)
+            .where(
+                Event.id == event_id,
+                Event.tenant_id == tenant_id,
+            )
+            .with_for_update()
+        )
+
+        if event is None:
+            raise LogisticsError("Evento no encontrado", 404)
+
+        if event.status in ("cancelled", "completed"):
+            raise LogisticsError(
+                "No se pueden preparar eventos finalizados",
+                409,
+            )
+
+        existing = db.session.scalar(
+            select(LogisticsOrder).where(
+                LogisticsOrder.tenant_id == tenant_id,
+                LogisticsOrder.event_id == event_id,
+                LogisticsOrder.status != "cancelled",
+            )
+        )
+
+        if existing is not None:
+            raise LogisticsError(
+                "El evento ya tiene una orden logística activa",
+                409,
+            )
+
+        reservations = db.session.scalars(
+            select(InventoryReservation).where(
+                InventoryReservation.tenant_id == tenant_id,
+                InventoryReservation.event_id == event_id,
+                InventoryReservation.status == "reserved",
+            )
+        ).all()
+
+        if not reservations:
+            raise LogisticsError(
+                "El evento no tiene reservas activas",
+                409,
+            )
+
+        quantities = defaultdict(int)
+
+        for reservation in reservations:
+            quantities[
+                reservation.inventory_item_id
+            ] += reservation.quantity
+
+        order = LogisticsOrder(
+            tenant_id=tenant_id,
+            event_id=event_id,
+            created_by=user_id,
+            scheduled_at=scheduled_at,
+            notes=notes,
+            status="pending",
+        )
+
         db.session.add(order)
         db.session.flush()
 
@@ -78,15 +108,13 @@ def create_order(tenant_id, event_id, user_id, scheduled_at=None, notes=None):
     except IntegrityError:
         db.session.rollback()
         raise LogisticsError(
-            "No se pudo crear la orden por una restricción de datos",
+            "Conflicto al crear la orden logística",
             409,
         )
 
     except Exception:
         db.session.rollback()
         raise
-
-
 def get_order(tenant_id, order_id):
     order = LogisticsOrder.query.filter_by(
         tenant_id=tenant_id,

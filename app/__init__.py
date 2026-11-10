@@ -19,7 +19,7 @@ from app.models.api_idempotency_key import ApiIdempotencyKey
 from app.models.inventory_reservation_audit import InventoryReservationAudit
 from app.models.logistics_order import LogisticsOrder
 from app.models.logistics_order_item import LogisticsOrderItem
-
+from app.api.logistics import bp as logistics_bp
 def create_app(config_override=None):
 
     # ==============================================
@@ -323,14 +323,15 @@ def create_app(config_override=None):
     # ==============================================
 
     blueprints = [
-        health_bp,
-        auth_bp,
-        clients_bp,
-        events_bp,
-        inventory_bp,
-        inventory_reservations_bp,
-        inventory_movements_bp
-    ]
+    health_bp,
+    auth_bp,
+    clients_bp,
+    events_bp,
+    inventory_bp,
+    inventory_reservations_bp,
+    inventory_movements_bp,
+    logistics_bp,
+]
 
 
     for blueprint in blueprints:
