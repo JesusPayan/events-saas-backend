@@ -2,12 +2,10 @@
 from pathlib import Path
 import os
 import time
-
 from dotenv import load_dotenv
 from flask import Flask, app, request, g, current_app, send_file
 from flask_cors import CORS
 from sqlalchemy.engine import make_url
-
 from app.extensions import db, migrate, jwt_manager
 from app.models.inventory_incident import InventoryIncident
 from app.api.inventory_incidents import bp as inventory_incidents_bp
@@ -17,9 +15,11 @@ from app.models.inventory_charge_audit import InventoryChargeAudit
 from app.api.inventory_charges import bp as inventory_charges_bp
 from flask_swagger_ui import get_swaggerui_blueprint
 from app.swagger import init_swagger
-
 from app.models.api_idempotency_key import ApiIdempotencyKey
 from app.models.inventory_reservation_audit import InventoryReservationAudit
+from app.models.logistics_order import LogisticsOrder
+from app.models.logistics_order_item import LogisticsOrderItem
+
 def create_app(config_override=None):
 
     # ==============================================
