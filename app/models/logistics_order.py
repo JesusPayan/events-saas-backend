@@ -36,6 +36,39 @@ class LogisticsOrder(db.Model):
         nullable=False,
         default=utc_now,
     )
+    
+    # Información del despacho
+    dispatched_at = db.Column(
+        db.DateTime,
+        nullable=True,
+    )
+
+    dispatched_by = db.Column(
+        db.BigInteger,
+        nullable=True,
+    )
+
+    dispatch_notes = db.Column(
+        db.Text,
+        nullable=True,
+    )
+
+    # Información de la entrega
+    delivered_at = db.Column(
+        db.DateTime,
+        nullable=True,
+    )
+
+    delivered_by = db.Column(
+        db.BigInteger,
+        nullable=True,
+    )
+
+    delivery_notes = db.Column(
+        db.Text,
+        nullable=True,
+    )
+
     updated_at = db.Column(
         db.DateTime,
         nullable=False,
@@ -78,4 +111,29 @@ class LogisticsOrder(db.Model):
             "ix_logistics_orders_tenant_event",
             "tenant_id", "event_id",
         ),
+        
+        db.CheckConstraint(
+            "status IN ("
+            "'pending', "
+            "'in_progress', "
+            "'prepared', "
+            "'dispatched', "
+            "'delivered', "
+            "'cancelled'"
+            ")",
+            name="ck_logistics_orders_status",
+        ),
+        
+        db.ForeignKeyConstraint(
+            ["dispatched_by"],
+            ["users.id"],
+            name="fk_logistics_orders_dispatched_by",
+        ),
+        db.ForeignKeyConstraint(
+            ["delivered_by"],
+            ["users.id"],
+            name="fk_logistics_orders_delivered_by",
+        ),
+
+
     )
