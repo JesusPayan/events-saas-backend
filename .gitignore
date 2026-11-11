@@ -33,3 +33,7 @@ htmlcov/
 .venv/
 venv/
 env/
+
+private_contracts/
+
+private_signatures/

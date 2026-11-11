@@ -10,7 +10,7 @@ from app.services.quote_validation import QuoteValidationError
 
 from app.models.quote_status_history import QuoteStatusHistory
 
-
+from sqlalchemy import select
 def utc_now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 

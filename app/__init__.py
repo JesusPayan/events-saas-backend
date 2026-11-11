@@ -3,7 +3,7 @@ from pathlib import Path
 import os
 import time
 from dotenv import load_dotenv
-from flask import Flask, app, request, g, current_app, send_file
+from flask import Flask, app, request, g, current_app
 from flask_cors import CORS
 from sqlalchemy.engine import make_url
 from app.extensions import db, migrate, jwt_manager
@@ -13,13 +13,18 @@ from app.models.inventory_adjustment import InventoryAdjustment
 from app.models.inventory_incident_charge import InventoryIncidentCharge
 from app.models.inventory_charge_audit import InventoryChargeAudit
 from app.api.inventory_charges import bp as inventory_charges_bp
-from flask_swagger_ui import get_swaggerui_blueprint
 from app.swagger import init_swagger
 from app.models.api_idempotency_key import ApiIdempotencyKey
 from app.models.inventory_reservation_audit import InventoryReservationAudit
 from app.models.logistics_order import LogisticsOrder
 from app.models.logistics_order_item import LogisticsOrderItem
 from app.api.logistics import bp as logistics_bp
+
+from app.api.quotes import bp as quotes_bp
+from app.api.contracts import bp as contracts_bp
+
+from app.api.signature_delivery import bp as signature_delivery_bp
+
 def create_app(config_override=None):
 
     # ==============================================
@@ -27,15 +32,8 @@ def create_app(config_override=None):
     # ==============================================
 
     base_dir = Path(__file__).resolve().parent.parent
-    # openapi_path = Path(app.root_path).parent / "openapi.json"
 
    
-    swagger_ui = get_swaggerui_blueprint(
-        "/api/docs",
-        "/api/openapi.json",
-        config={"app_name": "Eventos SaaS API"}
-    )
-
     load_dotenv(base_dir / ".env")
 
     env = os.getenv(
@@ -87,7 +85,9 @@ def create_app(config_override=None):
     upload_folder = os.getenv(
         env_config["uploads"]
     )
-
+    app.config["SIGNATURE_OTP_SECRET"] = os.getenv(
+    "SIGNATURE_OTP_SECRET"
+)
     # ==============================================
     # 4. CONFIGURACIÓN SQLALCHEMY
     # ==============================================
@@ -182,6 +182,9 @@ def create_app(config_override=None):
     # ==============================================
 
     from app.models import Tenant  # noqa: F401
+    from app.models.contract import Contract  # noqa: F401
+    from app.models.contract_item import ContractItem  # noqa: F401
+    from app.models.contract_status_history import ContractStatusHistory  # noqa: F401
 
     from app.models.crm import Client  # noqa: F401
     from app.models.event import Event  # noqa: F401
@@ -218,7 +221,9 @@ def create_app(config_override=None):
     # ==============================================
     # 11. VERIFICAR CONEXIÓN
     # ==============================================
-
+    app.config["CONTRACT_SIGNATURE_STORAGE_ROOT"] = os.getenv(
+    "CONTRACT_SIGNATURE_STORAGE_ROOT"
+)
     if app.config.get(
         "CHECK_DB_ON_STARTUP",
         True
@@ -252,9 +257,6 @@ def create_app(config_override=None):
         "http://localhost:4200,"
         "http://127.0.0.1:4200"
     ).split(",")
-    # @app.get("/api/openapi.json")
-    # def openapi_spec():
-    #         return send_file(openapi_path, mimetype="application/json")
     init_swagger(app)
     CORS(
         app,
@@ -268,7 +270,13 @@ def create_app(config_override=None):
             }
         }
     )
-
+    app.config["FRONTEND_PUBLIC_URL"] = os.getenv(
+        "FRONTEND_PUBLIC_URL",
+        "http://localhost:4200",
+    )
+    app.config["CONTRACT_DOCUMENT_STORAGE_ROOT"] = os.getenv(
+    "CONTRACT_DOCUMENT_STORAGE_ROOT"
+)
     # ==============================================
     # 13. IMPORTAR BLUEPRINTS
     # ==============================================
@@ -300,16 +308,60 @@ def create_app(config_override=None):
     from app.api.inventory_capacity_alert_events import (
     bp as inventory_capacity_alert_events_bp
 )
+    from app.api.contract_signature_requests import (
+    bp as contract_signature_requests_bp,
+)
+    from app.api.contract_documents import (
+    bp as contract_documents_bp,
+)
+    app.config["FRONTEND_PUBLIC_URL"] = os.getenv(
+        "FRONTEND_PUBLIC_URL",
+        "http://localhost:4200",
+    )
+
+    app.config["SIGNATURE_OTP_SECRET"] = os.getenv(
+        "SIGNATURE_OTP_SECRET"
+    )
+
+    from app.api.contract_signing import bp as contract_signing_bp
+    from app.api.signature_read import bp as signature_read_bp
+    from app.api.contract_signature_receipts import (
+    bp as receipts_bp
+)
 
     app.register_blueprint(
-    inventory_capacity_alert_events_bp,
-    url_prefix="/api/v1"
-)
+        receipts_bp,
+        url_prefix="/api/v1"
+    )
     app.register_blueprint(
-    inventory_replenishments_bp,
-    url_prefix="/api/v1"
-)
-    # app.register_blueprint(swagger_ui, url_prefix="/api/docs")
+        signature_read_bp,
+        url_prefix="/api/v1",
+    )
+    app.register_blueprint(
+        contract_signing_bp,
+        url_prefix="/api/v1",
+    )
+    app.register_blueprint(
+        signature_delivery_bp,
+        url_prefix="/api/v1"
+    )
+    app.register_blueprint(
+            contract_documents_bp,
+            url_prefix="/api/v1",
+        )
+
+    app.register_blueprint(
+        contract_signature_requests_bp,
+        url_prefix="/api/v1",
+    )
+    app.register_blueprint(
+        inventory_capacity_alert_events_bp,
+        url_prefix="/api/v1"
+    )
+    app.register_blueprint(
+        inventory_replenishments_bp,
+        url_prefix="/api/v1"
+    )
     app.register_blueprint(
     inventory_incidents_bp,
     url_prefix="/api/v1"
@@ -331,6 +383,8 @@ def create_app(config_override=None):
     inventory_reservations_bp,
     inventory_movements_bp,
     logistics_bp,
+    quotes_bp,
+    contracts_bp,
 ]
 
 
@@ -346,12 +400,6 @@ def create_app(config_override=None):
     # ==============================================
     # 15. MEDIR TIEMPOS HTTP
     # ==============================================
-    from app.api.quotes import bp as quotes_bp
-
-    app.register_blueprint(
-        quotes_bp,
-        url_prefix="/api/v1"
-    )
     @app.before_request
     def start_request_timer():
 
