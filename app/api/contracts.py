@@ -21,6 +21,13 @@ from app.services.contract_service import (
     serialize_contract,
     serialize_contract_history,
 )
+from io import BytesIO
+
+from app.models.contract_document import ContractDocument
+from app.services.contract_document_service import (
+    ContractDocumentError,
+    read_verified_document,
+)
 
 
 bp = Blueprint("contracts", __name__)
@@ -198,6 +205,7 @@ def get_contract_history_endpoint(contract_id):
         return contract_error_response(exc)
     
     
+
 @bp.get("/contracts/<int:contract_id>/pdf")
 @tenant_permission("contracts.read")
 def download_contract_pdf(contract_id):
@@ -211,9 +219,80 @@ def download_contract_pdf(contract_id):
     if contract is None:
         return jsonify(error="not_found"), 404
 
+    # Buscar la versión final más reciente.
+    document = db.session.scalar(
+        select(ContractDocument)
+        .where(
+            ContractDocument.tenant_id == tenant_id,
+            ContractDocument.contract_id == contract_id,
+            ContractDocument.is_final.is_(True),
+        )
+        .order_by(
+            ContractDocument.version.desc(),
+            ContractDocument.id.desc(),
+        )
+        .limit(1)
+    )
+
+    # Si existe un documento final, entregar exactamente
+    # los bytes originales después de validar su integridad.
+    if document is not None:
+        try:
+            pdf_bytes = read_verified_document(document)
+
+        except ContractDocumentError as exc:
+            return jsonify(
+                error=exc.code,
+                message=exc.message,
+            ), exc.status_code
+
+        response = send_file(
+            BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=(
+                f"contrato-{contract.id}"
+                f"-version-{document.version}.pdf"
+            ),
+        )
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
+    # No regenerar un contrato activo o firmado.
+    # Su documento original es obligatorio.
+    if contract.status != "draft":
+        return jsonify(
+            error="final_document_not_found",
+            message=(
+                "El contrato no tiene un documento final "
+                "disponible para descargar."
+            ),
+        ), 409
+
+    # Si existe una firma, no permitir reconstruir
+    # el contrato a partir de datos actuales.
+    from app.services.contract_protection_service import (
+        has_registered_signatures,
+    )
+
+    if has_registered_signatures(
+        tenant_id=tenant_id,
+        contract_id=contract_id,
+    ):
+        return jsonify(
+            error="signed_document_not_found",
+            message=(
+                "Existe una firma registrada, pero no se "
+                "encontró el documento final."
+            ),
+        ), 409
+
+    # Solo para borradores sin documento final:
+    # generar una vista preliminar.
     tenant = db.session.scalar(
         select(Tenant).where(
-            Tenant.id == tenant_id
+            Tenant.id == tenant_id,
         )
     )
 
@@ -244,10 +323,13 @@ def download_contract_pdf(contract_id):
         event=event,
     )
 
-    return send_file(
+    response = send_file(
         pdf,
         mimetype="application/pdf",
         as_attachment=True,
-        download_name=f"contrato-{contract.id}.pdf",
+        download_name=f"contrato-{contract.id}-borrador.pdf",
     )
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 

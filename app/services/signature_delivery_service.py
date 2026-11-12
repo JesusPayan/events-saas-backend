@@ -17,7 +17,10 @@ from app.models.contract_signature_request import ContractSignatureRequest
 from app.models.contract_signature_otp import ContractSignatureOtp
 from app.services.contract_document_service import read_verified_document
 from app.services.email_service import send_email, send_signature_otp, EmailDeliveryError
-
+from app.services.contract_protection_service import (
+    ContractProtectedError,
+    assert_new_invitation_allowed,
+)
 
 def now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -57,73 +60,166 @@ def invitation_for_update(token):
     return invitation
 
 
-def create_and_email_invitation(*, tenant_id, contract_id, document_id, signer_role, signer_name, signer_email, created_by):
-    if signer_role not in ('client', 'provider'):
-        raise SignatureDeliveryError('invalid_role', 'Rol de firmante inválido.')
-    if not isinstance(signer_name, str) or not 1 <= len(signer_name.strip()) <= 200:
-        raise SignatureDeliveryError('invalid_name', 'Nombre de firmante inválido.')
-    if not isinstance(signer_email, str) or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', signer_email.strip()) or len(signer_email.strip()) > 254:
-        raise SignatureDeliveryError('invalid_email', 'Correo de firmante inválido.')
-    frontend = current_app.config.get('FRONTEND_PUBLIC_URL', '').rstrip('/')
-    if not frontend or not frontend.startswith(('http://localhost:', 'http://127.0.0.1:', 'https://')):
-        raise RuntimeError('FRONTEND_PUBLIC_URL inválida')
-    try:
-        contract = db.session.scalar(select(Contract).where(
-            Contract.tenant_id == tenant_id, Contract.id == contract_id
-        ).with_for_update())
-        if contract is None:
-            raise SignatureDeliveryError('contract_not_found', 'Contrato no encontrado.', 404)
-        if contract.status in ('completed', 'cancelled'):
-            raise SignatureDeliveryError('contract_unavailable', 'Contrato no disponible para firma.', 409)
-        document = db.session.scalar(select(ContractDocument).where(
-            ContractDocument.tenant_id == tenant_id,
-            ContractDocument.id == document_id,
-            ContractDocument.contract_id == contract_id,
-            ContractDocument.is_final.is_(True),
-        ))
-        if document is None:
-            raise SignatureDeliveryError('document_not_found', 'Documento final no encontrado.', 404)
-        # Verify physical PDF, not only database metadata.
-        read_verified_document(document)
-        newer = db.session.scalar(select(ContractDocument.id).where(
-            ContractDocument.tenant_id == tenant_id,
-            ContractDocument.contract_id == contract_id,
-            ContractDocument.version > document.version,
-        ).limit(1))
-        if newer is not None:
-            raise SignatureDeliveryError('document_superseded', 'Existe una versión posterior del documento.', 409)
-        active = db.session.scalar(select(ContractSignatureRequest.id).where(
-            ContractSignatureRequest.tenant_id == tenant_id,
-            ContractSignatureRequest.contract_id == contract_id,
-            ContractSignatureRequest.signer_role == signer_role,
-            ContractSignatureRequest.status.in_(('pending', 'verified', 'signed')),
-        ).limit(1))
-        if active is not None:
-            raise SignatureDeliveryError('invitation_exists', 'Ya existe una invitación o firma para ese rol.', 409)
-        token = secrets.token_urlsafe(32)
-        inv = ContractSignatureRequest(
-            tenant_id=tenant_id, contract_id=contract_id, document_id=document_id,
-            signer_role=signer_role, signer_name=signer_name.strip(),
-            signer_email=signer_email.strip().lower(), token_hash=token_digest(token),
-            status='pending', expires_at=now() + timedelta(hours=72), created_by=created_by,
+
+def create_and_email_invitation(
+    *,
+    tenant_id,
+    contract_id,
+    document_id,
+    signer_role,
+    signer_name,
+    signer_email,
+    created_by,
+):
+    if signer_role not in ("client", "provider"):
+        raise SignatureDeliveryError(
+            "invalid_role",
+            "Rol de firmante inválido.",
         )
+
+    if not isinstance(signer_name, str) or not 1 <= len(signer_name.strip()) <= 200:
+        raise SignatureDeliveryError(
+            "invalid_name",
+            "Nombre de firmante inválido.",
+        )
+
+    if (
+        not isinstance(signer_email, str)
+        or len(signer_email.strip()) > 254
+        or not re.fullmatch(
+            r"[^\s@]+@[^\s@]+\.[^\s@]+",
+            signer_email.strip(),
+        )
+    ):
+        raise SignatureDeliveryError(
+            "invalid_email",
+            "Correo de firmante inválido.",
+        )
+
+    if (
+        isinstance(document_id, bool)
+        or not isinstance(document_id, int)
+        or document_id <= 0
+    ):
+        raise SignatureDeliveryError(
+            "invalid_document_id",
+            "Documento inválido.",
+        )
+
+    frontend = current_app.config.get(
+        "FRONTEND_PUBLIC_URL", ""
+    ).rstrip("/")
+
+    if not frontend or not frontend.startswith(
+        ("http://localhost:", "http://127.0.0.1:", "https://")
+    ):
+        raise RuntimeError("FRONTEND_PUBLIC_URL inválida")
+
+    try:
+        # Esta función bloquea el contrato y valida:
+        # - Estado draft
+        # - Documento final y última versión
+        # - Ausencia de firma previa del mismo rol
+        # - Ausencia de invitación vigente del mismo rol
+        assert_new_invitation_allowed(
+            tenant_id=tenant_id,
+            contract_id=contract_id,
+            document_id=document_id,
+            signer_role=signer_role,
+        )
+
+        document = db.session.scalar(
+            select(ContractDocument).where(
+                ContractDocument.tenant_id == tenant_id,
+                ContractDocument.id == document_id,
+                ContractDocument.contract_id == contract_id,
+                ContractDocument.is_final.is_(True),
+            )
+        )
+
+        # Comprobar que el PDF físico conserva su hash.
+        read_verified_document(document)
+
+        token = secrets.token_urlsafe(32)
+
+        inv = ContractSignatureRequest(
+            tenant_id=tenant_id,
+            contract_id=contract_id,
+            document_id=document_id,
+            signer_role=signer_role,
+            signer_name=signer_name.strip(),
+            signer_email=signer_email.strip().lower(),
+            token_hash=token_digest(token),
+            status="pending",
+            expires_at=now() + timedelta(hours=72),
+            created_by=created_by,
+        )
+
         db.session.add(inv)
         db.session.commit()
+
+        # Guardar los datos necesarios antes de enviar SMTP.
+        invitation_id = inv.id
+        recipient = inv.signer_email
+        recipient_name = inv.signer_name
+
+    except ContractProtectedError as exc:
+        db.session.rollback()
+        raise SignatureDeliveryError(
+            exc.code,
+            exc.message,
+            409,
+        ) from exc
+
     except Exception:
         db.session.rollback()
         raise
-    url = f'{frontend}/sign/{quote(token, safe="")}'
-    try:
-        send_email(to_email=inv.signer_email, subject='Invitación para firmar contrato - Eventos SaaS',
-                   text_body=(f'Hola {inv.signer_name},\n\nTienes un contrato pendiente de firma.\n'
-                              f'Accede a tu enlace privado: {url}\n\n'
-                              'El enlace vence en 72 horas. No lo compartas.\nEventos SaaS'))
-    except EmailDeliveryError as exc:
-        inv.status, inv.revoked_at = 'revoked', now()
-        db.session.commit()
-        raise SignatureDeliveryError('delivery_failed', 'No se pudo enviar la invitación.', 502) from exc
-    return inv
 
+    url = f'{frontend}/sign/{quote(token, safe="")}'
+
+    try:
+        send_email(
+            to_email=recipient,
+            subject="Invitación para firmar contrato - Eventos SaaS",
+            text_body=(
+                f"Hola {recipient_name},\n\n"
+                "Tienes un contrato pendiente de firma.\n"
+                f"Accede a tu enlace privado: {url}\n\n"
+                "El enlace vence en 72 horas. No lo compartas.\n"
+                "Eventos SaaS"
+            ),
+        )
+
+    except EmailDeliveryError as exc:
+        db.session.rollback()
+
+        try:
+            saved_invitation = db.session.get(
+                ContractSignatureRequest,
+                invitation_id,
+            )
+
+            if (
+                saved_invitation is not None
+                and saved_invitation.status == "pending"
+            ):
+                saved_invitation.status = "revoked"
+                saved_invitation.revoked_at = now()
+                db.session.commit()
+
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception(
+                "No se pudo revocar la invitación tras un fallo SMTP."
+            )
+
+        raise SignatureDeliveryError(
+            "delivery_failed",
+            "No se pudo enviar la invitación.",
+            502,
+        ) from exc
+
+    return inv
 
 def public_invitation(token):
     try:

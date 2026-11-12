@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from app.extensions import db
 from app.models.contract import Contract
 from app.models.contract_document import ContractDocument
+from app.models.contract_signature import ContractSignature
 from app.models.contract_signature_request import (
     ContractSignatureRequest,
 )
@@ -119,10 +120,10 @@ def freeze_contract_document(
                 404,
             )
 
-        if contract.status in ("cancelled", "completed"):
+        if contract.status != "draft":
             raise ContractDocumentError(
                 "contract_not_signable",
-                "El contrato no admite nuevas firmas.",
+                "Solo se pueden generar versiones finales de contratos en borrador.",
                 409,
             )
 
@@ -154,17 +155,23 @@ def freeze_contract_document(
         # registrar una firma sin un flujo formal
         # de sustitución documental.
         signed_request = db.session.scalar(
-            select(ContractSignatureRequest.id)
+            select(ContractSignature.id)
+            .join(
+                ContractSignatureRequest,
+                (
+                    ContractSignatureRequest.tenant_id
+                    == ContractSignature.tenant_id
+                ) & (
+                    ContractSignatureRequest.id
+                    == ContractSignature.request_id
+                ),
+            )
             .where(
-                ContractSignatureRequest.tenant_id
-                    == tenant_id,
-                ContractSignatureRequest.contract_id
-                    == contract_id,
-                ContractSignatureRequest.status == "signed",
+                ContractSignatureRequest.tenant_id == tenant_id,
+                ContractSignatureRequest.contract_id == contract_id,
             )
             .limit(1)
         )
-
         if signed_request is not None:
             raise ContractDocumentError(
                 "contract_already_signed",

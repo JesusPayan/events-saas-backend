@@ -12,6 +12,8 @@ from app.models.contract_document import ContractDocument
 from app.models.contract_signature_request import ContractSignatureRequest
 import re
 
+from app.services.contract_document_service import ContractDocumentError
+
 class SignatureRequestError(Exception):
     def __init__(self, code, message, status_code=400):
         super().__init__(message)
@@ -87,10 +89,11 @@ def create_signature_request(
                 404,
             )
 
-        if contract.status in ("cancelled", "completed"):
-            raise SignatureRequestError(
+        if contract.status != "draft":
+            raise ContractDocumentError(
                 "contract_not_signable",
-                "El contrato no admite nuevas firmas.",
+                "Solo pueden generarse documentos finales "
+                "para contratos en borrador.",
                 409,
             )
 

@@ -14,11 +14,12 @@ from app.models.contract_status_history import ContractStatusHistory
 from app.models.quote import Quote
 from app.models.quote_item import QuoteItem
 from app.models.quote_status_history import QuoteStatusHistory
-
+from app.models.contract_signature import ContractSignature
+from app.models.contract_signature_request import ContractSignatureRequest
 
 CONTRACT_TRANSITIONS = {
-    "draft": {"active", "cancelled"},
-    "active": {"completed", "cancelled"},
+    "draft": {"cancelled"},
+    "active": {"completed"},
     "completed": set(),
     "cancelled": set(),
 }
@@ -192,27 +193,90 @@ def create_contract_from_quote(tenant_id, quote_id, user_id):
         raise
 
 
-def change_contract_status(tenant_id, contract_id, new_status, user_id, notes=None):
+def change_contract_status(
+    tenant_id,
+    contract_id,
+    new_status,
+    user_id,
+    notes=None,
+):
     try:
         contract = db.session.scalar(
             select(Contract)
-            .where(Contract.tenant_id == tenant_id, Contract.id == contract_id)
+            .where(
+                Contract.tenant_id == tenant_id,
+                Contract.id == contract_id,
+            )
             .with_for_update()
         )
-        if contract is None:
-            raise ContractError("contract_not_found", "El contrato no existe.", 404)
 
-        allowed = CONTRACT_TRANSITIONS.get(contract.status, set())
+        if contract is None:
+            raise ContractError(
+                "contract_not_found",
+                "El contrato no existe.",
+                404,
+            )
+
+        # Validar primero la transición solicitada.
+        allowed = CONTRACT_TRANSITIONS.get(
+            contract.status,
+            set(),
+        )
+
         if new_status not in allowed:
             raise ContractError(
                 "invalid_status_transition",
-                f"No se permite cambiar de {contract.status} a {new_status}.",
+                (
+                    f"No se permite cambiar de "
+                    f"{contract.status} a {new_status}."
+                ),
                 409,
             )
 
+        # Impedir cancelar directamente un contrato
+        # en borrador que ya tenga firmas registradas.
+        if (
+            contract.status == "draft"
+            and new_status == "cancelled"
+        ):
+            signed_id = db.session.scalar(
+                select(ContractSignature.id)
+                .join(
+                    ContractSignatureRequest,
+                    (
+                        ContractSignatureRequest.tenant_id
+                        == ContractSignature.tenant_id
+                    )
+                    & (
+                        ContractSignatureRequest.id
+                        == ContractSignature.request_id
+                    ),
+                )
+                .where(
+                    ContractSignatureRequest.tenant_id
+                    == tenant_id,
+                    ContractSignatureRequest.contract_id
+                    == contract_id,
+                )
+                .limit(1)
+            )
+
+            if signed_id is not None:
+                raise ContractError(
+                    "contract_has_signatures",
+                    (
+                        "El contrato tiene firmas registradas. "
+                        "Su cancelación requiere un procedimiento "
+                        "contractual específico."
+                    ),
+                    409,
+                )
+
         previous_status = contract.status
+
         contract.status = new_status
         contract.updated_at = utc_now()
+
         db.session.add(
             ContractStatusHistory(
                 tenant_id=tenant_id,
@@ -224,16 +288,19 @@ def change_contract_status(tenant_id, contract_id, new_status, user_id, notes=No
                 created_at=utc_now(),
             )
         )
+
         db.session.commit()
+
         return contract
+
     except ContractError:
         db.session.rollback()
         raise
+
     except Exception:
         db.session.rollback()
         raise
-
-
+    
 def get_contract_history(tenant_id, contract_id):
     if get_contract(tenant_id, contract_id) is None:
         raise ContractError("contract_not_found", "El contrato no existe.", 404)
