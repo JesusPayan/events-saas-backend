@@ -308,9 +308,6 @@ def create_app(config_override=None):
     from app.api.inventory_capacity_alert_events import (
     bp as inventory_capacity_alert_events_bp
 )
-    from app.api.contract_signature_requests import (
-    bp as contract_signature_requests_bp,
-)
     from app.api.contract_documents import (
     bp as contract_documents_bp,
 )
@@ -328,6 +325,14 @@ def create_app(config_override=None):
     from app.api.contract_signature_receipts import (
     bp as receipts_bp
 )
+    from app.api.contract_signature_admin import (
+    bp as contract_signature_admin_bp
+)
+
+    app.register_blueprint(
+        contract_signature_admin_bp,
+        url_prefix="/api/v1"
+    )
 
     app.register_blueprint(
         receipts_bp,
@@ -350,10 +355,6 @@ def create_app(config_override=None):
             url_prefix="/api/v1",
         )
 
-    app.register_blueprint(
-        contract_signature_requests_bp,
-        url_prefix="/api/v1",
-    )
     app.register_blueprint(
         inventory_capacity_alert_events_bp,
         url_prefix="/api/v1"
