@@ -43,7 +43,11 @@ def storage_root():
     return Path(root).resolve()
 
 
+
 def document_path(storage_key):
+    """Resuelve una ruta segura sin permitir enlaces simbólicos."""
+    from pathlib import Path
+
     root = storage_root()
 
     if not storage_key:
@@ -53,14 +57,37 @@ def document_path(storage_key):
             409,
         )
 
-    path = (root / storage_key).resolve()
+    relative = Path(storage_key)
+
+    if relative.is_absolute():
+        raise ContractDocumentError(
+            "invalid_storage_key",
+            "No se permiten rutas absolutas.",
+            409,
+        )
+
+    # Primero verificar que la ruta no salga del directorio.
+    path = (root / relative).resolve()
 
     if not path.is_relative_to(root):
         raise ContractDocumentError(
             "invalid_storage_key",
-            "Ubicación del documento inválida.",
+            "La ruta está fuera del almacenamiento autorizado.",
             409,
         )
+
+    # Revisar los componentes originales antes de resolver symlinks.
+    current = root
+
+    for part in relative.parts:
+        current = current / part
+
+        if current.is_symlink():
+            raise ContractDocumentError(
+                "document_file_missing",
+                "No se permiten enlaces simbólicos.",
+                409,
+            )
 
     return path
 
