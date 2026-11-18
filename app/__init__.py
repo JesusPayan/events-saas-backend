@@ -21,6 +21,7 @@ from app.models.logistics_order_item import LogisticsOrderItem
 from app.api.logistics import bp as logistics_bp
 from app.models.contract_payment import ContractPayment  # noqa: F401
 from app.models.contract_payment_audit import ContractPaymentAudit  # noqa: F401
+from app.models.company_receipt import CompanyReceiptSettings, IssuedPaymentReceipt  # noqa: F401
 from app.api.quotes import bp as quotes_bp
 from app.api.contracts import bp as contracts_bp
 from app.api.signature_delivery import bp as signature_delivery_bp
@@ -354,6 +355,7 @@ def create_app(config_override=None):
     bp as contract_signature_admin_bp
 )
     from app.api.payment_receipts import bp as payment_receipts_bp
+    from app.api.company_receipts import bp as company_receipts_bp
 
     app.register_blueprint(
         contract_signature_admin_bp,
@@ -414,6 +416,7 @@ def create_app(config_override=None):
     contracts_bp,
     contract_payments_bp,
     payment_receipts_bp,
+    company_receipts_bp,
 ]
 
 
