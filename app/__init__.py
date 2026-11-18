@@ -242,10 +242,7 @@ def create_app(config_override=None):
     from app.models.inventory_movement import (
         InventoryMovement
     )
-    app.register_blueprint(
-    contract_payments_bp,
-    url_prefix="/api/v1",
-)
+    
     # ==============================================
     # 10. INICIALIZAR EXTENSIONES
     # ==============================================
@@ -356,6 +353,7 @@ def create_app(config_override=None):
     from app.api.contract_signature_admin import (
     bp as contract_signature_admin_bp
 )
+    from app.api.payment_receipts import bp as payment_receipts_bp
 
     app.register_blueprint(
         contract_signature_admin_bp,
@@ -414,6 +412,8 @@ def create_app(config_override=None):
     logistics_bp,
     quotes_bp,
     contracts_bp,
+    contract_payments_bp,
+    payment_receipts_bp,
 ]
 
 
