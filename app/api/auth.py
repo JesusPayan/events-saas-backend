@@ -100,9 +100,32 @@ def register():
             # Cargos
             "inventory.charges.approve",
             "inventory.charges.pay",
+            # Eventos
+            "events.read",
+            "events.create",
+            "events.update",
+
+            # Cotizaciones
+            "quotes.create",
+            "quotes.read",
+
+            # Contratos
+            "contracts.create",
+            "contracts.read",
+            "contracts.update",
+
+            # Inventario
+            "inventory.read",
+            "inventory.create",
+            "inventory.update",
+            "inventory.adjust",
         )
 
-        for code in permission_codes:
+        for code in dict.fromkeys(permission_codes):
+            if len(permission_codes) != len(set(permission_codes)):
+                current_app.logger.warning(
+                    "Se detectaron permisos duplicados en el registro"
+                )
             permission = db.session.scalar(
                 select(Permission).where(
                     Permission.code == code

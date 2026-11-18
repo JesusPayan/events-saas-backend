@@ -2,7 +2,7 @@
 import requests
 import pytest
 
-from test_inventory_full_lifecycle import lifecycle_scenario
+from tests.integration.test_inventory_full_lifecycle import lifecycle_scenario
 
 
 @pytest.mark.parametrize(

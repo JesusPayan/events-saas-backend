@@ -5,9 +5,9 @@ import io
 import pytest
 import requests
 
-from test_inventory_full_lifecycle import lifecycle_scenario
+from tests.integration.test_inventory_full_lifecycle import lifecycle_scenario
 
-from test_inventory_tenant_isolation import (
+from tests.integration.test_inventory_tenant_isolation import (
     restricted_inventory_user,
     two_tenant_inventory_scenario,
     unauthorized_tenant,

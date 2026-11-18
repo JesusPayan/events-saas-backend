@@ -6,7 +6,7 @@ import requests
 from app.extensions import db
 from app.models import Tenant
 from tests.conftest import test_context
-from test_inventory_full_lifecycle import lifecycle_scenario
+from tests.integration.test_inventory_full_lifecycle import lifecycle_scenario
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func
 from app.models.crm import Client
