@@ -92,10 +92,13 @@ def create_app(config_override=None):
     # 4. CONFIGURACIÓN SQLALCHEMY
     # ==============================================
 
-    if db_url:
-        app.config[
-            "SQLALCHEMY_DATABASE_URI"
-        ] = db_url
+    if not db_url:
+        raise RuntimeError(
+        f"Falta configurar {env_config['database']} "
+        f"para el ambiente {env}."
+    )
+
+    app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 
     app.config[
         "SQLALCHEMY_TRACK_MODIFICATIONS"
@@ -140,21 +143,44 @@ def create_app(config_override=None):
             "Falta JWT_SECRET_KEY."
         )
 
-    safe_uri = make_url(
-        database_uri
-    ).render_as_string(
-        hide_password=True
+    
+# ==============================================
+# VALIDACIÓN SEGURA DE BASE DE DATOS DE TESTING
+# ==============================================
+
+    parsed_db_url = make_url(database_uri)
+    backend = parsed_db_url.get_backend_name()
+
+    if env == "test":
+
+        is_mysql_test = (
+        backend == "mysql"
+        and parsed_db_url.database == "crm_events_test"
     )
 
-    app.logger.info(
-        "Entorno: %s",
-        env
+    is_sqlite_memory = (
+        database_uri == "sqlite:///:memory:"
     )
 
-    app.logger.info(
-        "Base de datos: %s",
-        safe_uri
+    explicit_sqlite_override = (
+        config_override is not None
+        and config_override.get("TESTING") is True
+        and config_override.get("SQLALCHEMY_DATABASE_URI")
+        == "sqlite:///:memory:"
     )
+
+    if is_sqlite_memory and explicit_sqlite_override:
+        # No verificar conexión al arrancar.
+        # SQLite creará su base en memoria al conectarse.
+        app.config["CHECK_DB_ON_STARTUP"] = False
+
+    elif not is_mysql_test:
+        raise RuntimeError(
+            "El entorno test solo permite "
+            "MySQL crm_events_test o SQLite en memoria "
+            "solicitado explícitamente por una prueba."
+        )
+
 
     # ==============================================
     # 8. CONFIGURAR CARPETA DE ARCHIVOS
@@ -173,9 +199,39 @@ def create_app(config_override=None):
         exist_ok=True
     )
 
-    app.config[
-        "UPLOAD_FOLDER"
-    ] = str(upload_path)
+    app.config["UPLOAD_FOLDER"] = str(upload_path)
+
+    # En test siempre se usan rutas aisladas, ignorando rutas de .env.
+    # En otros entornos se respetan las rutas personalizadas existentes.
+    if env == "test":
+        documents_root = upload_path / "contract_documents"
+        signatures_root = upload_path / "contract_signatures"
+    else:
+        documents_root = Path(
+            app.config.get("CONTRACT_DOCUMENT_STORAGE_ROOT")
+            or os.getenv("CONTRACT_DOCUMENT_STORAGE_ROOT")
+            or str(upload_path / "contract_documents")
+        ).expanduser()
+        signatures_root = Path(
+            app.config.get("CONTRACT_SIGNATURE_STORAGE_ROOT")
+            or os.getenv("CONTRACT_SIGNATURE_STORAGE_ROOT")
+            or str(upload_path / "contract_signatures")
+        ).expanduser()
+
+    if not documents_root.is_absolute():
+        documents_root = base_dir / documents_root
+    if not signatures_root.is_absolute():
+        signatures_root = base_dir / signatures_root
+
+    documents_root = documents_root.resolve()
+    signatures_root = signatures_root.resolve()
+    if documents_root == signatures_root:
+        raise RuntimeError("Documentos y firmas no pueden compartir la misma carpeta")
+
+    documents_root.mkdir(parents=True, exist_ok=True)
+    signatures_root.mkdir(parents=True, exist_ok=True)
+    app.config["CONTRACT_DOCUMENT_STORAGE_ROOT"] = str(documents_root)
+    app.config["CONTRACT_SIGNATURE_STORAGE_ROOT"] = str(signatures_root)
 
     # ==============================================
     # 9. IMPORTAR MODELOS
@@ -221,9 +277,6 @@ def create_app(config_override=None):
     # ==============================================
     # 11. VERIFICAR CONEXIÓN
     # ==============================================
-    app.config["CONTRACT_SIGNATURE_STORAGE_ROOT"] = os.getenv(
-    "CONTRACT_SIGNATURE_STORAGE_ROOT"
-)
     if app.config.get(
         "CHECK_DB_ON_STARTUP",
         True
@@ -274,9 +327,6 @@ def create_app(config_override=None):
         "FRONTEND_PUBLIC_URL",
         "http://localhost:4200",
     )
-    app.config["CONTRACT_DOCUMENT_STORAGE_ROOT"] = os.getenv(
-    "CONTRACT_DOCUMENT_STORAGE_ROOT"
-)
     # ==============================================
     # 13. IMPORTAR BLUEPRINTS
     # ==============================================
@@ -311,14 +361,7 @@ def create_app(config_override=None):
     from app.api.contract_documents import (
     bp as contract_documents_bp,
 )
-    app.config["FRONTEND_PUBLIC_URL"] = os.getenv(
-        "FRONTEND_PUBLIC_URL",
-        "http://localhost:4200",
-    )
 
-    app.config["SIGNATURE_OTP_SECRET"] = os.getenv(
-        "SIGNATURE_OTP_SECRET"
-    )
 
     from app.api.contract_signing import bp as contract_signing_bp
     from app.api.signature_read import bp as signature_read_bp
