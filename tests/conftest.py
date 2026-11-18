@@ -237,8 +237,8 @@ def test_context(flask_app):
 @pytest.fixture
 def reconciliation_scenario(flask_app, test_context):
 
-    from integration.test_reconciliation_concurrency import (
-        create_reconciliation_scenario,
+    from tests.integration.test_reconciliation_concurrency import (
+    create_reconciliation_scenario,
     )
 
     # --------------------------------------------------

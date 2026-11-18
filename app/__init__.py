@@ -19,11 +19,12 @@ from app.models.inventory_reservation_audit import InventoryReservationAudit
 from app.models.logistics_order import LogisticsOrder
 from app.models.logistics_order_item import LogisticsOrderItem
 from app.api.logistics import bp as logistics_bp
-
+from app.models.contract_payment import ContractPayment  # noqa: F401
+from app.models.contract_payment_audit import ContractPaymentAudit  # noqa: F401
 from app.api.quotes import bp as quotes_bp
 from app.api.contracts import bp as contracts_bp
-
 from app.api.signature_delivery import bp as signature_delivery_bp
+from app.api.contract_payments import bp as contract_payments_bp
 
 def create_app(config_override=None):
 
@@ -128,59 +129,40 @@ def create_app(config_override=None):
     # 7. VALIDAR CONFIGURACIÓN FINAL
     # ==============================================
 
-    database_uri = app.config.get(
-        "SQLALCHEMY_DATABASE_URI"
-    )
-
+    database_uri = app.config.get("SQLALCHEMY_DATABASE_URI")
     if not database_uri:
-        raise RuntimeError(
-            "Falta la configuración de base de datos "
-            f"para el entorno {env}."
-        )
-
+        raise RuntimeError(f"Falta la base de datos para el entorno {env}.")
     if not app.config.get("JWT_SECRET_KEY"):
-        raise RuntimeError(
-            "Falta JWT_SECRET_KEY."
-        )
-
-    
-# ==============================================
-# VALIDACIÓN SEGURA DE BASE DE DATOS DE TESTING
-# ==============================================
+        raise RuntimeError("Falta JWT_SECRET_KEY.")
 
     parsed_db_url = make_url(database_uri)
     backend = parsed_db_url.get_backend_name()
 
     if env == "test":
-
         is_mysql_test = (
-        backend == "mysql"
-        and parsed_db_url.database == "crm_events_test"
-    )
-
-    is_sqlite_memory = (
-        database_uri == "sqlite:///:memory:"
-    )
-
-    explicit_sqlite_override = (
-        config_override is not None
-        and config_override.get("TESTING") is True
-        and config_override.get("SQLALCHEMY_DATABASE_URI")
-        == "sqlite:///:memory:"
-    )
-
-    if is_sqlite_memory and explicit_sqlite_override:
-        # No verificar conexión al arrancar.
-        # SQLite creará su base en memoria al conectarse.
-        app.config["CHECK_DB_ON_STARTUP"] = False
-
-    elif not is_mysql_test:
-        raise RuntimeError(
-            "El entorno test solo permite "
-            "MySQL crm_events_test o SQLite en memoria "
-            "solicitado explícitamente por una prueba."
+            backend == "mysql"
+            and parsed_db_url.database == "crm_events_test"
         )
-
+        explicit_sqlite_override = (
+            database_uri == "sqlite:///:memory:"
+            and config_override is not None
+            and config_override.get("TESTING") is True
+            and config_override.get("SQLALCHEMY_DATABASE_URI")
+            == "sqlite:///:memory:"
+        )
+        if explicit_sqlite_override:
+            app.config["CHECK_DB_ON_STARTUP"] = False
+        elif not is_mysql_test:
+            raise RuntimeError(
+                "Test solo permite MySQL crm_events_test o SQLite en memoria "
+                "solicitado explícitamente por una prueba."
+            )
+    elif env == "development":
+        if backend != "mysql" or parsed_db_url.database != "crm_events_dev":
+            raise RuntimeError("Development requiere MySQL crm_events_dev.")
+    elif env == "production":
+        if backend != "mysql":
+            raise RuntimeError("Production requiere MySQL.")
 
     # ==============================================
     # 8. CONFIGURAR CARPETA DE ARCHIVOS
@@ -260,7 +242,10 @@ def create_app(config_override=None):
     from app.models.inventory_movement import (
         InventoryMovement
     )
-
+    app.register_blueprint(
+    contract_payments_bp,
+    url_prefix="/api/v1",
+)
     # ==============================================
     # 10. INICIALIZAR EXTENSIONES
     # ==============================================
