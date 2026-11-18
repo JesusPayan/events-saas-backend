@@ -254,7 +254,23 @@ def freeze_contract_document(
             output.write(pdf_bytes)
             output.flush()
             os.fsync(output.fileno())
+        
+        # Buscar versiones finales anteriores.
+        previous_documents = db.session.scalars(
+            select(ContractDocument)
+            .where(
+                ContractDocument.tenant_id == tenant_id,
+                ContractDocument.contract_id == contract_id,
+                ContractDocument.is_final.is_(True),
+            )
+        ).all()
 
+        # Marcar versiones anteriores como no vigentes.
+        for previous_document in previous_documents:
+            previous_document.is_final = False
+
+        # Crear la nueva versión, independientemente
+        # de si existen documentos anteriores.
         document = ContractDocument(
             tenant_id=tenant_id,
             contract_id=contract_id,
@@ -271,6 +287,7 @@ def freeze_contract_document(
         db.session.commit()
 
         return document
+
 
     except ContractDocumentError:
         db.session.rollback()

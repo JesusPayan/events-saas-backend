@@ -283,39 +283,38 @@ def register_contract_signature(
             },
         )
 
+
         db.session.add(audit)
         db.session.flush()
+
+        # Verificar si ambas partes ya firmaron.
         activated = activate_if_both_signed(
             tenant_id=invitation.tenant_id,
             contract_id=invitation.contract_id,
             document_id=document.id,
             actor_user_id=invitation.created_by,
         )
+
         current_app.logger.info(
             "Activación bilateral: contrato=%s documento=%s activated=%s",
             invitation.contract_id,
             document.id,
             activated,
         )
-        from app.services.contract_protection_service import (
-    assert_contract_content_editable,
-)
 
-        assert_contract_content_editable(
-            tenant_id=tenant_id,
-            contract_id=contract_id,
-        )
-
+        # Confirmar firma, auditoría y activación
+        # dentro de la misma transacción.
         db.session.commit()
 
         return {
-             "signature_id": signature.id,
-             "request_id": invitation.id,
-             "document_id": document.id,
-             "status": "signed",
-             "signed_at": now.isoformat() + "Z",
-             "contract_activated": activated,
+            "signature_id": signature.id,
+            "request_id": invitation.id,
+            "document_id": document.id,
+            "status": "signed",
+            "signed_at": now.isoformat() + "Z",
+            "contract_activated": activated,
         }
+
 
     except ContractSigningError:
         db.session.rollback()
