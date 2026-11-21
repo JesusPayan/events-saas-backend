@@ -26,7 +26,13 @@ from app.api.quotes import bp as quotes_bp
 from app.api.contracts import bp as contracts_bp
 from app.api.signature_delivery import bp as signature_delivery_bp
 from app.api.contract_payments import bp as contract_payments_bp
-
+from app.models.billing import (
+    BillingPlan,
+    BillingPlanPrice,
+    BillingPlanEntitlement,
+    TenantSubscription,
+    SubscriptionAudit,
+)
 def create_app(config_override=None):
 
     # ==============================================
