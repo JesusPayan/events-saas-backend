@@ -34,6 +34,7 @@ from app.models.billing import (
     SubscriptionAudit,
 )
 from app.api.billing import bp as billing_bp
+from app.api.billing_admin import bp as billing_admin_bp
 def create_app(config_override=None):
 
     # ==============================================
@@ -425,6 +426,7 @@ def create_app(config_override=None):
     payment_receipts_bp,
     company_receipts_bp,
       billing_bp,
+      billing_admin_bp
 ]
 
 
