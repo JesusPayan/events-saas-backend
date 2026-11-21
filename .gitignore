@@ -37,3 +37,7 @@ env/
 private_contracts/
 
 private_signatures/
+.pdf
+.png
+.jpeg
+.jpg
