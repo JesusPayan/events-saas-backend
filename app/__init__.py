@@ -33,6 +33,7 @@ from app.models.billing import (
     TenantSubscription,
     SubscriptionAudit,
 )
+from app.api.billing import bp as billing_bp
 def create_app(config_override=None):
 
     # ==============================================
@@ -423,6 +424,7 @@ def create_app(config_override=None):
     contract_payments_bp,
     payment_receipts_bp,
     company_receipts_bp,
+      billing_bp,
 ]
 
 
