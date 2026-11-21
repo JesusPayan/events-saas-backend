@@ -3,6 +3,8 @@ import logging
 import os
 import smtplib
 import ssl
+from flask import current_app, has_app_context
+from sqlalchemy.engine import make_url
 from email.message import EmailMessage
 from email.utils import formataddr
 
@@ -14,6 +16,24 @@ class EmailDeliveryError(Exception):
 
 
 def send_email(*, to_email: str, subject: str, text_body: str) -> None:
+    if (has_app_context() and current_app.config.get("APP_ENV") == "test") or os.getenv("FLASK_ENV", "").lower() == "test":
+        if not has_app_context() or current_app.config.get("APP_ENV") != "test":
+            raise EmailDeliveryError("Contexto de pruebas requerido")
+        url = make_url(current_app.config["SQLALCHEMY_DATABASE_URI"])
+        if url.get_backend_name() != "mysql" or url.database != "crm_events_test":
+            raise EmailDeliveryError("Base E2E incorrecta")
+        msg = EmailMessage()
+        msg["From"] = "Eventos SaaS E2E <no-reply@example.test>"
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        msg.set_content(text_body)
+        try:
+            with smtplib.SMTP("127.0.0.1", 1025, timeout=15) as smtp:
+                smtp.send_message(msg)
+        except (smtplib.SMTPException, OSError) as exc:
+            raise EmailDeliveryError("Mailpit no disponible") from exc
+        return
+
     host = os.environ.get("SMTP_HOST", "").strip()
     port = int(os.environ.get("SMTP_PORT", "587"))
     username = os.environ.get("SMTP_USERNAME", "").strip()

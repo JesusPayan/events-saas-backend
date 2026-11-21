@@ -248,6 +248,7 @@ def create_app(config_override=None):
     # 10. INICIALIZAR EXTENSIONES
     # ==============================================
 
+    app.config["APP_ENV"] = env
     db.init_app(app)
 
     migrate.init_app(
@@ -458,7 +459,7 @@ def create_app(config_override=None):
         current_app.logger.info(
             "HTTP %s %s -> %s | %.2f ms",
             request.method,
-            request.path,
+            request.url_rule.rule if request.url_rule else "<unmatched>",
             response.status_code,
             elapsed_ms
         )
