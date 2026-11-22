@@ -35,6 +35,8 @@ from app.models.billing import (
 )
 from app.api.billing import bp as billing_bp
 from app.api.billing_admin import bp as billing_admin_bp
+from app.models.mercadopago import MPCheckout, MPWebhookEvent, MPPayment  # noqa: F401
+from app.api.mercadopago import bp as mercadopago_bp
 def create_app(config_override=None):
 
     # ==============================================
@@ -126,6 +128,9 @@ def create_app(config_override=None):
         app.config[
             "JWT_SECRET_KEY"
         ] = jwt_secret
+    app.config['MP_ACCESS_TOKEN'] = os.getenv('MP_ACCESS_TOKEN', '')
+    app.config['MP_WEBHOOK_SECRET'] = os.getenv('MP_WEBHOOK_SECRET', '')
+    app.config['MP_BACK_URL'] = os.getenv('MP_BACK_URL', '')
 
     # ==============================================
     # 6. CONFIGURACIÓN ADICIONAL
@@ -426,7 +431,8 @@ def create_app(config_override=None):
     payment_receipts_bp,
     company_receipts_bp,
       billing_bp,
-      billing_admin_bp
+      billing_admin_bp,
+      mercadopago_bp
 ]
 
 
