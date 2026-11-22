@@ -1,4 +1,12 @@
+.git
+.github
 .venv
 __pycache__
 .pytest_cache
 .env
+.env.*
+uploads
+tests
+*.sql
+*.log
+.vscode

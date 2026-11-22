@@ -51,8 +51,18 @@ def seed_billing_catalog():
                     db.session.add(BillingPlanPrice(plan_id=plan.id, currency="MXN", billing_interval=interval,
                                                     amount=amount, version=1, active=True))
                     created["prices"] += 1
-                elif Decimal(price.amount) != amount or not price.active:
+                elif Decimal(price.amount) != amount:
                     raise CatalogConflict(f"Price {item['code']}/{interval}/v1 differs from approved catalog")
+                elif not price.active:
+                    # v1 may be retired only by operator versioning (a newer version exists).
+                    newer = db.session.scalar(select(BillingPlanPrice.id).where(
+                        BillingPlanPrice.plan_id == plan.id,
+                        BillingPlanPrice.currency == "MXN",
+                        BillingPlanPrice.billing_interval == interval,
+                        BillingPlanPrice.version > 1,
+                    ).limit(1))
+                    if newer is None:
+                        raise CatalogConflict(f"Price {item['code']}/{interval}/v1 is inactive without a newer version")
 
             for code, limit in item["features"].items():
                 entitlement = db.session.scalar(select(BillingPlanEntitlement).where(

@@ -41,3 +41,9 @@ private_signatures/
 .png
 .jpeg
 .jpg
+# Archivos generados / datos locales (no versionar)
+uploads/
+private_contracts/
+private_signatures/
+*.log
+/git

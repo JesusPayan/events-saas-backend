@@ -1,11 +1,67 @@
-# BILL-01.1 — Backend patch
+# Eventos SaaS — Backend (Flask)
 
-Copy `app/models/billing.py` and `app/migrations/versions/b11000000001_bill_01_1_billing_core.py` into the corresponding backend paths. The supplied ZIP originally flattens `app/` into its root; the paths here refer to your **real** backend repository where `app/` is the Python package.
+API REST multiempresa (multi-tenant) para gestión de eventos: clientes, eventos, inventario, logística,
+cotizaciones, contratos con firma electrónica, pagos/comprobantes y suscripciones con Mercado Pago.
 
-**Important:** add `from app.models.billing import BillingPlan, BillingPlanPrice, BillingPlanEntitlement, TenantSubscription, SubscriptionAudit  # noqa: F401` in `app/__init__.py` alongside existing model imports, so SQLAlchemy metadata discovers the tables. Do not edit the provided source ZIP.
+- Python 3.13 · Flask 3.1 · SQLAlchemy 2 · Flask-Migrate/Alembic · MySQL 8
+- Aislamiento por tenant: cada endpoint de negocio exige `Authorization: Bearer <token>` y `X-Tenant-ID`,
+  y valida membresía + permiso (`app/security.py`).
+- Frontend: repositorio `event-saas-frontend` (Angular 20).
 
-Before migration, run `python -m flask --app app:create_app db heads` and `python -m flask --app app:create_app db current` using `FLASK_ENV=test` and a database URL pointing to `crm_events_test`. The patch's `down_revision=c03500000001` assumes the provided ZIP reflects the latest `development` migration chain. If `db heads` shows another revision, **stop** and reconcile before upgrading.
+## Instalación local (Windows / Conda)
 
-After confirming the migration chain, run `python -m flask --app app:create_app db upgrade` against `crm_events_test` first, and inspect the new tables. Do not apply to production or development until tests pass.
+```cmd
+conda activate crm_events
+cd C:\DEV\crm-events\eventos-saas\events-saas-backend
+python -m pip install -r requirements-ci.txt
+copy .env.example .env
+```
 
-BILL-01.1 contains the **data layer only**, not endpoints, checkout, provider webhooks, or CFDI issuance. Business rules such as one effective subscription per tenant must be enforced transactionally by the service layer in BILL-01.2 (the schema retains history). Price/entitlement changes should be versioned in service logic; do not modify an already subscribed price in place.
+Edita `.env` (ver comentarios en `.env.example`). La base `crm_events_dev` debe existir en MySQL 8.
+
+```cmd
+set FLASK_ENV=development
+python -m flask --app app:create_app db upgrade
+python -m scripts.seed_billing_catalog
+python -m flask --app app:create_app run --port 5000
+```
+
+## Pruebas
+
+Requieren MySQL con la base `crm_events_test` (nunca la de desarrollo):
+
+```cmd
+set FLASK_ENV=test
+python -m flask --app app:create_app db upgrade
+python -m flask --app app:create_app run --port 5001 --no-reload
+python -m pytest -q
+```
+
+(El servidor en 5001 lo usan algunas pruebas de integración vía `API_BASE_URL`.)
+
+## Migraciones
+
+```cmd
+python -m flask --app app:create_app db heads     REM debe haber una sola cabeza
+python -m flask --app app:create_app db upgrade
+```
+
+Las migraciones son aditivas. Antes de aplicar en producción: respaldo (ver `docs/OPERACION.md`).
+
+## Producción
+
+Nunca `flask run` ni `main.py`. Se usa `gunicorn -c gunicorn.conf.py wsgi:app` (ver `Dockerfile`).
+`FLASK_ENV=production` valida al arrancar secretos, Mercado Pago, CORS https y rate limiting compartido;
+si algo falta, la app no arranca.
+
+## Documentación
+
+| Documento | Contenido |
+|---|---|
+| `docs/AUDITORIA_V1.md` | Estado real, hallazgos y backlog priorizado |
+| `docs/DESPLIEGUE.md` | Arquitectura de producción, variables, CI/CD, staging |
+| `docs/MERCADOPAGO.md` | Configuración de suscripciones y webhooks, prueba de extremo a extremo |
+| `docs/OPERACION.md` | Backups, restauración, rollback, monitoreo |
+| `docs/MANUAL_OPERADOR.md` | Panel global: precios, suscripciones, conciliación |
+| `docs/MANUAL_USUARIO.md` | Guía básica para empresas |
+| `docs/CHECKLIST_LANZAMIENTO.md` | Criterios de salida a producción |

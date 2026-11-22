@@ -91,3 +91,22 @@ def test_catalog_read_service_exposes_seed(catalog_app):
     assert len(items) == 3
     assert {p["code"] for p in items} == {"basic", "professional", "enterprise"}
     assert all(len(p["prices"]) == 2 and len(p["entitlements"]) == 7 for p in items)
+
+
+def test_reseed_accepts_operator_versioned_prices(catalog_app):
+    seed_billing_catalog()
+    v1 = db.session.scalar(select(BillingPlanPrice).where(BillingPlanPrice.billing_interval == "month"))
+    v1.active = False
+    db.session.add(BillingPlanPrice(plan_id=v1.plan_id, currency="MXN", billing_interval="month",
+                                    amount=Decimal("349.00"), version=2, active=True))
+    db.session.commit()
+    assert seed_billing_catalog() == {"plans": 0, "prices": 0, "entitlements": 0}
+
+
+def test_reseed_rejects_v1_disabled_without_replacement(catalog_app):
+    seed_billing_catalog()
+    v1 = db.session.scalar(select(BillingPlanPrice).where(BillingPlanPrice.billing_interval == "month"))
+    v1.active = False
+    db.session.commit()
+    with pytest.raises(CatalogConflict):
+        seed_billing_catalog()

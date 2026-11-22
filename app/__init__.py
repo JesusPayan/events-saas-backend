@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from flask import Flask, app, request, g, current_app
 from flask_cors import CORS
 from sqlalchemy.engine import make_url
-from app.extensions import db, migrate, jwt_manager
+from app.extensions import db, migrate, jwt_manager, limiter
 from app.models.inventory_incident import InventoryIncident
 from app.api.inventory_incidents import bp as inventory_incidents_bp
 from app.models.inventory_adjustment import InventoryAdjustment
@@ -32,11 +32,49 @@ from app.models.billing import (
     BillingPlanEntitlement,
     TenantSubscription,
     SubscriptionAudit,
+    BillingPriceAudit,
 )
 from app.api.billing import bp as billing_bp
 from app.api.billing_admin import bp as billing_admin_bp
-from app.models.mercadopago import MPCheckout, MPWebhookEvent, MPPayment  # noqa: F401
+from app.models.mercadopago import MPCheckout, MPWebhookEvent, MPPayment, MPReconciliationIssue  # noqa: F401
 from app.api.mercadopago import bp as mercadopago_bp
+_WEAK_SECRETS = {"", "dev-only-not-for-production", "replace-with-random-secret", "change-me"}
+
+
+def _parse_id_list(raw):
+    ids = []
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if part.isdigit() and int(part) > 0:
+            ids.append(int(part))
+    return frozenset(ids)
+
+
+def _validate_production_config(app):
+    """Fail fast on unsafe production settings instead of running insecurely."""
+    problems = []
+    for key in ("SECRET_KEY", "JWT_SECRET_KEY", "SIGNATURE_OTP_SECRET"):
+        value = os.getenv(key) or app.config.get(key) or ""
+        if value in _WEAK_SECRETS or len(value) < 32:
+            problems.append(f"{key} debe tener al menos 32 caracteres aleatorios")
+    if not app.config.get("MP_ACCESS_TOKEN"):
+        problems.append("MP_ACCESS_TOKEN es obligatorio")
+    if len(app.config.get("MP_WEBHOOK_SECRET") or "") < 16:
+        problems.append("MP_WEBHOOK_SECRET es obligatorio")
+    if not (app.config.get("MP_BACK_URL") or "").startswith("https://"):
+        problems.append("MP_BACK_URL debe ser https://")
+    origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+    if not origins or any(not o.startswith("https://") for o in origins):
+        problems.append("CORS_ORIGINS debe listar solo orígenes https://")
+    if not (os.getenv("FRONTEND_PUBLIC_URL") or "").startswith("https://"):
+        problems.append("FRONTEND_PUBLIC_URL debe ser https://")
+    if (app.config.get("RATELIMIT_STORAGE_URI") or "").startswith("memory://") and \
+            os.getenv("RATELIMIT_ALLOW_MEMORY", "false").lower() not in ("true", "1"):
+        problems.append("RATELIMIT_STORAGE_URI debe apuntar a un almacenamiento compartido (p. ej. redis://)")
+    if problems:
+        raise RuntimeError("Configuración de producción inválida: " + "; ".join(problems))
+
+
 def create_app(config_override=None):
 
     # ==============================================
@@ -60,6 +98,18 @@ def create_app(config_override=None):
     app = Flask(__name__)
 
     app.config.from_object("app.config.Config")
+
+    # Detrás de un proxy TLS (nginx/balanceador): número de proxies de confianza.
+    # 0 = sin proxy (no se confía en X-Forwarded-*).
+    trusted_proxies = int(os.getenv("TRUSTED_PROXY_COUNT", "0") or 0)
+    if trusted_proxies > 0:
+        from werkzeug.middleware.proxy_fix import ProxyFix
+        app.wsgi_app = ProxyFix(
+            app.wsgi_app,
+            x_for=trusted_proxies,
+            x_proto=trusted_proxies,
+            x_host=trusted_proxies,
+        )
     app.config["CHECK_DB_ON_STARTUP"] = (
         os.getenv("CHECK_DB_ON_STARTUP", "true").lower()
         in ("true", "1", "yes")
@@ -132,6 +182,19 @@ def create_app(config_override=None):
     app.config['MP_WEBHOOK_SECRET'] = os.getenv('MP_WEBHOOK_SECRET', '')
     app.config['MP_BACK_URL'] = os.getenv('MP_BACK_URL', '')
 
+    # Operadores globales de la plataforma (IDs de usuario separados por coma).
+    app.config['BILLING_OPERATOR_USER_IDS'] = _parse_id_list(
+        os.getenv('BILLING_OPERATOR_USER_IDS', '')
+    )
+    app.config['BILLING_ENFORCE_ENTITLEMENTS'] = (
+        os.getenv('BILLING_ENFORCE_ENTITLEMENTS', 'false').lower() in ('true', '1', 'yes')
+    )
+    app.config['RATELIMIT_STORAGE_URI'] = os.getenv('RATELIMIT_STORAGE_URI', 'memory://')
+    app.config['RATELIMIT_HEADERS_ENABLED'] = True
+    # Las pruebas automatizadas registran muchos usuarios; el límite se prueba explícitamente.
+    app.config['RATELIMIT_ENABLED'] = env != 'test'
+    app.config['MAX_CONTENT_LENGTH'] = int(os.getenv('MAX_CONTENT_LENGTH', str(20 * 1024 * 1024)))
+
     # ==============================================
     # 6. CONFIGURACIÓN ADICIONAL
     # ==============================================
@@ -177,6 +240,7 @@ def create_app(config_override=None):
     elif env == "production":
         if backend != "mysql":
             raise RuntimeError("Production requiere MySQL.")
+        _validate_production_config(app)
 
     # ==============================================
     # 8. CONFIGURAR CARPETA DE ARCHIVOS
@@ -270,6 +334,7 @@ def create_app(config_override=None):
     )
 
     jwt_manager.init_app(app)
+    limiter.init_app(app)
 
     # ==============================================
     # 11. VERIFICAR CONEXIÓN
@@ -455,6 +520,31 @@ def create_app(config_override=None):
         g.request_start_time = (
             time.perf_counter()
         )
+
+    @app.after_request
+    def security_headers(response):
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        if env == "production":
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+            )
+        return response
+
+    @app.errorhandler(413)
+    def payload_too_large(_error):
+        return {"error": "payload_too_large"}, 413
+
+    @app.errorhandler(429)
+    def rate_limited(_error):
+        return {"error": "rate_limited"}, 429
+
+    @app.errorhandler(500)
+    def internal_error(_error):
+        db.session.rollback()
+        return {"error": "internal_server_error"}, 500
 
     @app.after_request
     def log_request_duration(response):
