@@ -1,42 +1,95 @@
+from datetime import date, datetime
+from decimal import Decimal
 
 from flask import Blueprint, request, jsonify, g
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.inspection import inspect
 
 from app.extensions import db
 from app.models.inventory_incident import InventoryIncident
+from app.models.inventory_incident_charge import InventoryIncidentCharge
+from app.models.inventory_capacity_alert import InventoryCapacityAlert
+from app.models.inventory_reconciliation_audit import (
+    InventoryReconciliationAudit,
+)
 from app.security import tenant_permission
 from app.services.inventory_incidents import (
     create_incident,
-    IncidentError
+    IncidentError,
 )
 from app.services.inventory_reconciliation import (
     reconcile_incident,
-    ReconciliationError
+    ReconciliationError,
 )
-from app.models.inventory_capacity_alert import InventoryCapacityAlert
-from app.models.inventory_reconciliation_audit import InventoryReconciliationAudit
-from sqlalchemy.inspection import inspect
-from datetime import date, datetime
-from decimal import Decimal
-from app.models.inventory_incident_charge import InventoryIncidentCharge
 
 bp = Blueprint("inventory_incidents", __name__)
+
+
 
 @bp.post("/inventory/incidents/<int:incident_id>/reconcile")
 @tenant_permission("inventory.adjust")
 def reconcile_inventory_incident(incident_id):
+    tenant_id = g.tenant_id
+    user_id = g.user.id
+
+    # Validar el cuerpo antes de ejecutar lógica de negocio.
+    payload = request.get_json(silent=True)
+
+    if not isinstance(payload, dict):
+        return jsonify({
+            "error": "invalid_json"
+        }), 400
+
     try:
         result = reconcile_incident(
-            tenant_id=g.tenant_id,
+            tenant_id=tenant_id,
             incident_id=incident_id,
-            user_id=g.user.id,
-            payload=request.get_json(silent=True)
+            user_id=user_id,
+            payload=payload,
         )
 
         return jsonify(result), 200
 
     except ReconciliationError as exc:
-        return jsonify(error=exc.code), exc.status
+        db.session.rollback()
+
+        return jsonify({
+            "error": exc.code,
+        }), exc.status
+
+    except IntegrityError as exc:
+        db.session.rollback()
+
+        original_error = getattr(exc, "orig", None)
+        mysql_error_code = None
+
+        if original_error is not None:
+            args = getattr(original_error, "args", ())
+
+            if args:
+                mysql_error_code = args[0]
+
+        duplicate_adjustment = (
+            mysql_error_code == 1062
+            and "uq_adjustment_incident" in str(original_error)
+        )
+
+        if duplicate_adjustment:
+            return jsonify({
+                "error": "incident_already_adjusted",
+                "message": (
+                    "La incidencia ya fue conciliada "
+                    "por otra solicitud concurrente."
+                ),
+            }), 409
+
+        # No ocultar otros errores de integridad.
+        raise
+
+
+    
+    
 @bp.get("/inventory/incidents")
 @tenant_permission("inventory.read")
 def list_incidents():

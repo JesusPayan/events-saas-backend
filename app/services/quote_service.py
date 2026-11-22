@@ -172,3 +172,93 @@ def list_quotes(tenant_id, page=1, per_page=20):
         per_page=per_page,
         error_out=False
     )
+
+from datetime import datetime, timezone
+
+
+QUOTE_TRANSITIONS = {
+    "draft": {"sent", "cancelled"},
+    "sent": {"accepted", "rejected", "expired", "cancelled"},
+    "accepted": set(),
+    "rejected": set(),
+    "expired": set(),
+    "cancelled": set(),
+    "converted": set(),
+}
+
+
+def change_quote_status(
+    tenant_id: int,
+    quote_id: int,
+    user_id: int,
+    new_status: str,
+    notes: str | None = None,
+):
+    if not isinstance(new_status, str):
+        raise QuoteValidationError({
+            "status": "invalid_status"
+        })
+
+    if notes is not None and (
+        not isinstance(notes, str) or len(notes) > 2000
+    ):
+        raise QuoteValidationError({
+            "notes": "invalid_notes"
+        })
+
+    quote = db.session.scalar(
+        select(Quote)
+        .where(
+            Quote.id == quote_id,
+            Quote.tenant_id == tenant_id,
+        )
+        .with_for_update()
+    )
+
+    if quote is None:
+        raise QuoteValidationError(
+            {"quote": "not_found"},
+            status_code=404,
+        )
+
+    previous_status = quote.status
+    allowed = QUOTE_TRANSITIONS.get(previous_status, set())
+
+    if new_status not in allowed:
+        raise QuoteValidationError(
+            {
+                "status": "invalid_transition",
+                "current_status": previous_status,
+                "requested_status": new_status,
+            },
+            status_code=409,
+        )
+
+    if (
+        new_status == "sent"
+        and quote.valid_until is not None
+        and quote.valid_until < datetime.now(
+            timezone.utc
+        ).date()
+    ):
+        raise QuoteValidationError(
+            {"valid_until": "quote_expired"},
+            status_code=409,
+        )
+
+    quote.status = new_status
+
+    db.session.add(
+        QuoteStatusHistory(
+            tenant_id=tenant_id,
+            quote_id=quote.id,
+            previous_status=previous_status,
+            new_status=new_status,
+            changed_by=user_id,
+            notes=notes.strip() if notes else None,
+        )
+    )
+
+    db.session.flush()
+
+    return quote

@@ -1,3 +1,4 @@
+from app.services.billing.guards import require_entitlement
 
 from datetime import datetime
 from flask import Blueprint, request, jsonify, g
@@ -108,6 +109,7 @@ def list_events():
 
 @bp.post("/events")
 @tenant_permission("events.create")
+@require_entitlement("events", serialize_creates=True)
 def create_event():
     data = request.get_json(silent=True)
     cleaned, errors = validate_event(data)

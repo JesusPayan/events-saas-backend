@@ -1,7 +1,13 @@
 
 from flask import Blueprint, request, jsonify, g
 from sqlalchemy.exc import IntegrityError, DataError
+from flask import send_file
+from sqlalchemy import select
 
+from app.models.tenant import Tenant
+from app.models.crm import Client
+from app.models.event import Event
+from app.services.quote_pdf_service import generate_quote_pdf
 from app.extensions import db
 from app.security import tenant_permission
 from app.services.quote_service import (
@@ -9,6 +15,7 @@ from app.services.quote_service import (
     get_quote,
     list_quotes,
     serialize_quote,
+    change_quote_status 
 )
 from app.services.quote_validation import QuoteValidationError
 
@@ -90,4 +97,92 @@ def get_quote_endpoint(quote_id):
 
     return jsonify(
         serialize_quote(quote, include_items=True)
+    )
+
+@bp.patch("/quotes/<int:quote_id>/status")
+@tenant_permission("quotes.create")
+def change_quote_status_endpoint(quote_id):
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify(
+            error="invalid_json"
+        ), 400
+
+    if set(data) - {"status", "notes"}:
+        return jsonify(
+            error="unknown_fields"
+        ), 400
+
+    try:
+        quote = change_quote_status(
+            tenant_id=g.tenant_id,
+            quote_id=quote_id,
+            user_id=g.user.id,
+            new_status=data.get("status"),
+            notes=data.get("notes"),
+        )
+
+        db.session.commit()
+
+        return jsonify(
+            serialize_quote(quote, include_items=True)
+        ), 200
+
+    except QuoteValidationError as exc:
+        db.session.rollback()
+
+        return jsonify(
+            error="validation_error",
+            details=exc.details,
+        ), exc.status_code
+
+    except Exception:
+        db.session.rollback()
+        raise
+    from flask import send_file
+@bp.get("/quotes/<int:quote_id>/pdf")
+@tenant_permission("quotes.read")
+def download_quote_pdf(quote_id):
+    tenant_id = g.tenant_id
+
+    quote = get_quote(tenant_id, quote_id)
+
+    if quote is None:
+        return jsonify(error="not_found"), 404
+
+    tenant = db.session.scalar(
+        select(Tenant).where(Tenant.id == tenant_id)
+    )
+
+    client = db.session.scalar(
+        select(Client).where(
+            Client.id == quote.client_id,
+            Client.tenant_id == tenant_id,
+        )
+    )
+
+    event = db.session.scalar(
+        select(Event).where(
+            Event.id == quote.event_id,
+            Event.client_id == quote.client_id,
+            Event.tenant_id == tenant_id,
+        )
+    )
+
+    if tenant is None or client is None or event is None:
+        return jsonify(error="related_data_not_found"), 404
+
+    pdf = generate_quote_pdf(
+        quote=quote,
+        tenant=tenant,
+        client=client,
+        event=event,
+    )
+
+    return send_file(
+        pdf,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"cotizacion-{quote.id}.pdf",
     )
