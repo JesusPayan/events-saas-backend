@@ -1,3 +1,4 @@
+from app.services.billing.guards import require_entitlement
 from flask import Blueprint, jsonify, g
 from app.security import tenant_permission
 from app.services.billing.catalog_service import list_active_plans
@@ -23,3 +24,10 @@ def subscription():
 @tenant_permission('tenant.read')
 def usage():
     return jsonify(get_tenant_usage(g.tenant_id)), 200
+
+
+@bp.get('/billing/entitlements/<string:feature_code>')
+@tenant_permission('tenant.read')
+def entitlement_status(feature_code):
+    from app.services.billing.entitlements_service import entitlement
+    return jsonify(feature_code=feature_code, **entitlement(g.tenant_id, feature_code)), 200
