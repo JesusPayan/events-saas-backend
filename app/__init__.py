@@ -256,7 +256,8 @@ def create_app(config_override=None):
     from app.models.inventory_movement import (
         InventoryMovement
     )
-    
+    from app.api.billing_prices_admin import bp as billing_prices_admin_bp
+    app.register_blueprint(billing_prices_admin_bp, url_prefix='/api/v1')
     # ==============================================
     # 10. INICIALIZAR EXTENSIONES
     # ==============================================
