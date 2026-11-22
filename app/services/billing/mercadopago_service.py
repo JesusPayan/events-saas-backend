@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from urllib.parse import quote
 from flask import current_app
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from app.extensions import db
 from app.models.billing import BillingPlanPrice, BillingPlan, TenantSubscription, SubscriptionAudit, utc_now
 from app.models.mercadopago import MPCheckout, MPWebhookEvent, MPPayment
@@ -19,17 +20,58 @@ class BillingMPError(Exception):
 
 def signature_valid(header, request_id, resource_id):
     secret = current_app.config.get('MP_WEBHOOK_SECRET')
+
     if not secret or not header or not request_id or not resource_id:
         return False
-    parts = dict(x.strip().split('=', 1) for x in header.split(',') if '=' in x)
-    ts, digest = parts.get('ts'), parts.get('v1')
-    if not ts or not digest or not ts.isdigit() or not re.fullmatch(r'[a-fA-F0-9]{64}', digest):
+
+    try:
+        parts = dict(
+            item.strip().split('=', 1)
+            for item in header.split(',')
+            if '=' in item
+        )
+    except (ValueError, AttributeError):
         return False
-    if abs(int(datetime.now(timezone.utc).timestamp()) - int(ts) / 1000) > 300:
+
+    ts = parts.get('ts')
+    digest = parts.get('v1')
+
+    if (
+        not ts
+        or not digest
+        or not ts.isdigit()
+        or not re.fullmatch(r'[a-fA-F0-9]{64}', digest)
+    ):
         return False
-    manifest = f'id:{str(resource_id).lower()};request-id:{request_id};ts:{ts};'
-    expected = hmac.new(secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
+
+    # Aceptar timestamps Unix en segundos o milisegundos.
+    timestamp = int(ts)
+
+    if timestamp >= 10**12:
+        timestamp_seconds = timestamp / 1000
+    else:
+        timestamp_seconds = timestamp
+
+    now = datetime.now(timezone.utc).timestamp()
+
+    # Protección contra solicitudes antiguas o futuras.
+    if abs(now - timestamp_seconds) > 300:
+        return False
+
+    manifest = (
+        f'id:{str(resource_id).lower()};'
+        f'request-id:{request_id};'
+        f'ts:{ts};'
+    )
+
+    expected = hmac.new(
+        secret.encode('utf-8'),
+        manifest.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+
     return hmac.compare_digest(expected, digest.lower())
+
 
 def create_checkout(tenant_id, price_id, payer_email):
     if not isinstance(price_id, int) or isinstance(price_id, bool) or price_id < 1:
@@ -97,42 +139,98 @@ def reconcile_payment(payment_id):
     """Verify payment via API; match amount/currency and provider subscription before granting access."""
     payment = api('GET', '/authorized_payments/' + quote(str(payment_id), safe=''))
     if not isinstance(payment, dict) or str(payment.get('id')) != str(payment_id):
+        db.session.rollback()
         return False
     provider_id = str(payment.get('preapproval_id') or '')
-    checkout = db.session.scalar(select(MPCheckout).where(MPCheckout.provider_subscription_id == provider_id).with_for_update())
-    if not checkout:
-        return False
-    price = db.session.get(BillingPlanPrice, checkout.plan_price_id)
+    # Serialize all payments for this provider subscription on the EXISTING
+    # checkout row, including the very first payment before a subscription exists.
+    # InnoDB SELECT ... FOR UPDATE requires an open transaction.
     try:
-        amount = Decimal(str(payment.get('transaction_amount')))
-    except (InvalidOperation, TypeError):
-        return False
-    if not price or payment.get('currency_id') != price.currency or amount != price.amount:
-        return False
-    status = payment.get('status')
-    if status not in ('approved', 'processed'):
-        return False
-    if db.session.scalar(select(MPPayment.id).where(MPPayment.provider_payment_id == str(payment_id))):
-        return True
-    sub = db.session.scalar(select(TenantSubscription).where(TenantSubscription.provider == 'mercadopago', TenantSubscription.provider_subscription_id == provider_id).with_for_update())
-    if sub is None:
-        active = db.session.scalar(select(TenantSubscription).where(TenantSubscription.tenant_id == checkout.tenant_id, TenantSubscription.status.in_(['active','trialing','past_due','paused'])).limit(1))
-        if active:
+        checkout = db.session.scalar(
+            select(MPCheckout).where(
+                MPCheckout.provider_subscription_id == provider_id
+            ).with_for_update()
+        )
+        if not checkout:
+            db.session.rollback()
             return False
-        sub = TenantSubscription(tenant_id=checkout.tenant_id, plan_price_id=checkout.plan_price_id, status='incomplete', provider='mercadopago', provider_subscription_id=provider_id)
-        db.session.add(sub)
-        db.session.flush()
-    if sub.status == 'canceled':
+        price = db.session.get(BillingPlanPrice, checkout.plan_price_id)
+        try:
+            amount = Decimal(str(payment.get('transaction_amount')))
+        except (InvalidOperation, TypeError):
+            db.session.rollback()
+            return False
+        if not price or payment.get('currency_id') != price.currency or amount != price.amount:
+            db.session.rollback()
+            return False
+        status = payment.get('status')
+        # Re-fetch every time. A payment can later be refunded or charged back.
+        existing = db.session.scalar(select(MPPayment).where(
+            MPPayment.provider_payment_id == str(payment_id)).with_for_update())
+        if existing:
+            if existing.provider_subscription_id != provider_id or existing.amount != amount or existing.currency != price.currency:
+                db.session.rollback()
+                return False
+            if status in ('refunded', 'charged_back'):
+                if existing.status != status:
+                    existing.status = status
+                    sub = db.session.scalar(select(TenantSubscription).where(
+                        TenantSubscription.provider == 'mercadopago',
+                        TenantSubscription.provider_subscription_id == provider_id).with_for_update())
+                    if sub:
+                        # Do not silently claw back a period; require a reviewed
+                        # commercial policy and fraud workflow before revocation.
+                        db.session.add(SubscriptionAudit(
+                            tenant_id=sub.tenant_id, subscription_id=sub.id,
+                            old_status=sub.status, new_status=sub.status,
+                            action='mp_payment_reversed'))
+                    db.session.commit()
+                else:
+                    db.session.rollback()
+                return True
+            if status in ('approved', 'processed'):
+                if existing.status in ('refunded', 'charged_back'):
+                    db.session.rollback()  # stale/out-of-order positive notification
+                    return False
+                db.session.rollback()
+                return True
+            db.session.rollback()
+            return False
+        if status not in ('approved', 'processed'):
+            db.session.rollback()
+            return False
+        sub = db.session.scalar(select(TenantSubscription).where(TenantSubscription.provider == 'mercadopago', TenantSubscription.provider_subscription_id == provider_id).with_for_update())
+        if sub is None:
+            active = db.session.scalar(select(TenantSubscription).where(TenantSubscription.tenant_id == checkout.tenant_id, TenantSubscription.status.in_(['active','trialing','past_due','paused'])).limit(1))
+            if active:
+                db.session.rollback()
+                return False
+            sub = TenantSubscription(tenant_id=checkout.tenant_id, plan_price_id=checkout.plan_price_id, status='incomplete', provider='mercadopago', provider_subscription_id=provider_id)
+            db.session.add(sub)
+            db.session.flush()
+        if sub.status == 'canceled':
+            db.session.rollback()
+            return False
+        old = sub.status
+        from app.services.billing.subscription_admin_service import _period
+        now = utc_now()
+        sub.status = 'active'
+        # Extend from the paid-through date for early renewals; never shorten paid access.
+        # For late payments, begin a new period when the payment is verified.
+        period_start = max(now, sub.current_period_end) if sub.current_period_end else now
+        sub.current_period_start = period_start
+        sub.current_period_end = _period(period_start, price.billing_interval)
+        sub.updated_at = now
+        checkout.status = 'active'
+        db.session.add(MPPayment(provider_payment_id=str(payment_id), provider_subscription_id=provider_id, status=status, amount=amount, currency=price.currency))
+        db.session.add(SubscriptionAudit(tenant_id=sub.tenant_id, subscription_id=sub.id, old_status=old, new_status='active', action='mp_payment_verified'))
+        db.session.commit()
+        return True
+    except IntegrityError:
+        # A uniqueness violation must not leave a poisoned session.
+        # The caller may retry; do not treat unknown conflicts as success.
+        db.session.rollback()
         return False
-    old = sub.status
-    from app.services.billing.subscription_admin_service import _period
-    now = utc_now()
-    sub.status = 'active'
-    sub.current_period_start = now
-    sub.current_period_end = _period(now, price.billing_interval)
-    sub.updated_at = now
-    checkout.status = 'active'
-    db.session.add(MPPayment(provider_payment_id=str(payment_id), provider_subscription_id=provider_id, status=status, amount=amount, currency=price.currency))
-    db.session.add(SubscriptionAudit(tenant_id=sub.tenant_id, subscription_id=sub.id, old_status=old, new_status='active', action='mp_payment_verified'))
-    db.session.commit()
-    return True
+    except Exception:
+        db.session.rollback()
+        raise
