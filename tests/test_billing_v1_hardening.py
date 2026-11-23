@@ -401,3 +401,72 @@ def test_proxy_fix_uses_real_client_ip(monkeypatch):
                                   environ_base={'REMOTE_ADDR': '10.0.0.2'}):
         app.wsgi_app(request.environ, lambda *a, **k: None)
         assert request.environ['REMOTE_ADDR'] == '203.0.113.7'
+
+
+
+# ------------------------------------------------------------------
+# Política comercial v1.0: nivel gratuito y cancelación al fin del periodo
+# ------------------------------------------------------------------
+
+def test_free_tier_applies_without_subscription(client):
+    from app.services.billing.catalog_seed import seed_free_tier
+    from app.services.billing.entitlements_service import entitlement
+    tenant, headers = _owner(client, 'v1-free@example.test', 'v1-free')
+    with client.application.app_context():
+        assert entitlement(tenant, 'clients')['reason'] == 'not_subscribed'  # fail-closed sin sembrar
+        assert seed_free_tier() == {'plans': 1, 'entitlements': 7}
+        assert seed_free_tier() == {'plans': 0, 'entitlements': 0}
+        decision = entitlement(tenant, 'clients')
+        assert decision['allowed'] is True and decision['tier'] == 'free' and decision['limit'] == 25
+        assert entitlement(tenant, 'advanced_reports')['reason'] == 'feature_disabled'
+    plans = client.get('/api/v1/billing/plans', headers=headers).json['items']
+    assert all(p['code'] != 'free' for p in plans)
+    usage = client.get('/api/v1/billing/usage', headers=headers).json
+    assert usage['tier'] == 'free' and any(i['feature_code'] == 'clients' for i in usage['items'])
+
+
+def test_free_tier_limit_enforced_on_create(client):
+    from app.services.billing.catalog_seed import seed_free_tier
+    from app.models.billing import BillingPlanEntitlement
+    tenant, headers = _owner(client, 'v1-free-lim@example.test', 'v1-free-lim')
+    with client.application.app_context():
+        seed_free_tier()
+        free = db.session.scalar(select(BillingPlan).where(BillingPlan.code == 'free'))
+        ent = db.session.scalar(select(BillingPlanEntitlement).where(
+            BillingPlanEntitlement.plan_id == free.id, BillingPlanEntitlement.feature_code == 'clients'))
+        ent.limit_value = 1
+        db.session.commit()
+    client.application.config['BILLING_ENFORCE_ENTITLEMENTS'] = True
+    try:
+        body = {'client_type': 'individual', 'first_name': 'Ana', 'last_name': 'Uno', 'email': 'ana1@example.test'}
+        first = client.post('/api/v1/clients', headers=headers, json=body)
+        assert first.status_code == 201, first.json
+        second = client.post('/api/v1/clients', headers=headers, json=dict(body, email='ana2@example.test'))
+        assert second.status_code == 403
+        assert second.json['reason'] == 'limit_reached' and second.json['tier'] == 'free'
+    finally:
+        client.application.config['BILLING_ENFORCE_ENTITLEMENTS'] = False
+
+
+def test_canceled_subscription_keeps_access_until_period_end(client):
+    from datetime import timedelta
+    from app.services.billing.entitlements_service import entitlement
+    from app.models.billing import BillingPlanEntitlement
+    tenant, headers = _owner(client, 'v1-cend@example.test', 'v1-cend')
+    with client.application.app_context():
+        price = _price()
+        db.session.add(BillingPlanEntitlement(plan_id=price.plan_id, feature_code='clients', limit_value=100))
+        db.session.commit()
+        _checkout(tenant, price)
+        with patch(API, return_value=_invoice('inv-cend')):
+            assert reconcile_payment('inv-cend') is True
+    remote = {'id': 'mp-sub-v1', 'external_reference': 'ref-mp-sub-v1', 'status': 'cancelled'}
+    with patch(API, return_value=remote):
+        assert client.post('/api/v1/billing/mercadopago/cancel', headers=headers).status_code == 200
+    with client.application.app_context():
+        sub = db.session.query(TenantSubscription).one()
+        assert sub.status == 'canceled' and sub.ended_at == sub.current_period_end
+        during = entitlement(tenant, 'clients')
+        assert during['allowed'] is True and during['tier'] == 'paid' and during['limit'] == 100
+        after = entitlement(tenant, 'clients', at=sub.current_period_end + timedelta(seconds=1))
+        assert after['allowed'] is False and after['reason'] == 'subscription_inactive'

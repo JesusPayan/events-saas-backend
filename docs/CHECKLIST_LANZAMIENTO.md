@@ -4,7 +4,7 @@ Marca cada punto con evidencia (fecha, responsable, enlace a log o captura).
 
 ## Bloqueadores (todos obligatorios)
 
-- [ ] **Rotar credenciales expuestas** en el `.env` que estuvo versionado en repos públicos: contraseña de
+- [x] **Rotar credenciales expuestas** (confirmado por el propietario el 2026-11-23) en el `.env` que estuvo versionado en repos públicos: contraseña de
       aplicación de Gmail (SMTP), `JWT_SECRET_KEY`, `SECRET_KEY`, `SIGNATURE_OTP_SECRET`, `MP_WEBHOOK_SECRET`,
       `MP_ACCESS_TOKEN` y la contraseña de MySQL incluida en las URLs.
 - [ ] Decidir si se reescribe el historial de Git para eliminar el `.env` (requiere force-push; la rotación
@@ -13,8 +13,12 @@ Marca cada punto con evidencia (fecha, responsable, enlace a log o captura).
 - [ ] Proteger ramas `master`/`development` (PR + CI obligatorios).
 - [ ] Prueba de extremo a extremo de Mercado Pago en staging (ver `docs/MERCADOPAGO.md`), incluida la
       verificación del formato real de `authorized_payments`.
-- [ ] Decisión comercial: periodo de prueba / acceso antes del primer pago, y si se activa
-      `BILLING_ENFORCE_ENTITLEMENTS=true` en el lanzamiento.
+- [x] Decisión comercial (2026-11-23): sin pago, nivel **Gratuito** con funciones básicas; al cancelar se
+      conserva el acceso hasta el final del periodo pagado.
+- [ ] Sembrar el nivel gratuito (`scripts.seed_billing_catalog`) **antes** de activar
+      `BILLING_ENFORCE_ENTITLEMENTS=true`; si no existe, las empresas sin pago quedan bloqueadas.
+- [ ] Confirmar los límites del plan Gratuito (por defecto: 1 usuario, 25 clientes, 10 eventos, inventario,
+      cotizaciones y contratos; sin reportes avanzados ni API).
 - [ ] Infraestructura aprobada y creada (dominio, TLS, MySQL administrado, Redis, almacenamiento persistente).
 - [ ] Backups automáticos activos y **una restauración probada** (`docs/OPERACION.md`).
 - [ ] Monitoreo de `/health` y `/ready` y alertas de 5xx configurados.

@@ -2,9 +2,11 @@ from sqlalchemy import select
 from app.extensions import db
 from app.models.billing import BillingPlan, BillingPlanPrice, BillingPlanEntitlement
 
+FREE_PLAN_CODE = 'free'
+
 
 def list_active_plans():
-    plans = db.session.scalars(select(BillingPlan).where(BillingPlan.active.is_(True)).order_by(BillingPlan.id)).all()
+    plans = db.session.scalars(select(BillingPlan).where(BillingPlan.active.is_(True), BillingPlan.code != FREE_PLAN_CODE).order_by(BillingPlan.id)).all()
     result = []
     for plan in plans:
         prices = db.session.scalars(select(BillingPlanPrice).where(BillingPlanPrice.plan_id == plan.id, BillingPlanPrice.active.is_(True)).order_by(BillingPlanPrice.id)).all()

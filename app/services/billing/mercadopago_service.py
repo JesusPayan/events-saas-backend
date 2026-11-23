@@ -128,7 +128,10 @@ def reconcile_preapproval(provider_id):
             old = sub.status
             sub.status = 'canceled'
             sub.canceled_at = utc_now()
-            sub.ended_at = sub.canceled_at
+            # Política: el acceso pagado se conserva hasta el final del periodo ya cobrado.
+            sub.ended_at = (sub.current_period_end
+                            if sub.current_period_end and sub.current_period_end > sub.canceled_at
+                            else sub.canceled_at)
             db.session.add(SubscriptionAudit(tenant_id=sub.tenant_id, subscription_id=sub.id, old_status=old, new_status='canceled', action='mp_canceled'))
     elif status == 'authorized':
         if checkout.status not in ('active', 'canceled'):

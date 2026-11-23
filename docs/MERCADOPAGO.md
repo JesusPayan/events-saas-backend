@@ -25,7 +25,8 @@
    - Reembolsos/contracargos se registran y auditan; un "aprobado" tardío no revierte un reembolso.
 6. **Cancelación** (`POST /api/v1/billing/mercadopago/cancel`, permiso `billing.manage`): solicita
    `PUT /preapproval/{id}` con `status=cancelled`, vuelve a leer el recurso y solo marca cancelada si
-   Mercado Pago lo confirma (si no, responde 502 y no cambia nada).
+   Mercado Pago lo confirma (si no, responde 502 y no cambia nada). El acceso pagado se conserva hasta
+   `current_period_end`; después se aplica el plan Gratuito.
 7. **Incidencias**: webhooks que no concilian quedan en `billing_mp_reconciliation_issues` (panel global) y
    se responden con 503 para que Mercado Pago reintente.
 
