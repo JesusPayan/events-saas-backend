@@ -107,8 +107,8 @@ def create_app(config_override=None):
         app.wsgi_app = ProxyFix(
             app.wsgi_app,
             x_for=trusted_proxies,
-            x_proto=trusted_proxies,
-            x_host=trusted_proxies,
+            # El proxy más cercano reenvía el esquema original (un solo valor).
+            x_proto=1,
         )
     app.config["CHECK_DB_ON_STARTUP"] = (
         os.getenv("CHECK_DB_ON_STARTUP", "true").lower()
@@ -181,6 +181,8 @@ def create_app(config_override=None):
     app.config['MP_ACCESS_TOKEN'] = os.getenv('MP_ACCESS_TOKEN', '')
     app.config['MP_WEBHOOK_SECRET'] = os.getenv('MP_WEBHOOK_SECRET', '')
     app.config['MP_BACK_URL'] = os.getenv('MP_BACK_URL', '')
+    # Minutos tras los cuales un checkout no autorizado deja de bloquear un nuevo intento.
+    app.config['MP_CHECKOUT_PENDING_TTL_MINUTES'] = int(os.getenv('MP_CHECKOUT_PENDING_TTL_MINUTES', '30'))
 
     # Operadores globales de la plataforma (IDs de usuario separados por coma).
     app.config['BILLING_OPERATOR_USER_IDS'] = _parse_id_list(

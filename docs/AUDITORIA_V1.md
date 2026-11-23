@@ -8,7 +8,7 @@ frontend `feature/billing_3.5` (0173d5d). Rama de trabajo local: `release/v1.0-h
 
 | Verificación | Antes | Después |
 |---|---|---|
-| Backend `pytest` (MySQL 8.0.46 real) | 334 pasan | **364 pasan** (334 + 7 de BILL-02 + 23 nuevas) |
+| Backend `pytest` (MySQL 8.0.46 real) | 334 pasan | **367 pasan** (334 + 7 de BILL-02 + 26 nuevas) |
 | Migraciones desde cero | 30, una cabeza | 31, una cabeza (`b04000000001`); upgrade → downgrade → upgrade verificado |
 | Frontend `ng build --configuration production` | **Falla** (13 errores en `app.routes.ts`) | Compila; paquete inicial 559 kB → 413 kB |
 | Frontend `npm test` | 3 pasan | 8 pasan |
@@ -85,13 +85,12 @@ Ruta crítica: 1 → 2 → 4 → 5 → 6 → 7 → 10. Total pendiente estimado:
 
 ## 6. Riesgos pendientes
 
-- Formato real de `GET /authorized_payments/{id}` no verificado contra la API viva (red bloqueada en el entorno
-  de esta entrega). Si no trae `payment.status`, ninguna suscripción se activará (falla cerrada), no habrá
-  activaciones indebidas. Verificar en staging.
+- Formato de `authorized_payments` verificado con la API real en sandbox (2026-11-22). Pendiente: recepción
+  del webhook (la activación se hizo con el script de conciliación).
 - La firma de webhook rechaza entregas con más de 5 minutos de antigüedad; si Mercado Pago reutiliza `ts` en
   reintentos, esos reintentos se rechazarán (la conciliación diaria lo cubre).
 - La sesión vive solo en memoria (recargar = volver a entrar). Seguro, pero incómodo.
-- Cancelar retira el acceso de inmediato (no espera al fin del periodo pagado). Confirmar política.
+- Política comercial implementada: plan Gratuito sin pago y acceso hasta fin de periodo al cancelar.
 - `db check` reporta diferencias de nombres de índices entre modelos y migraciones (cosmético).
 - Aviso de compilación CSS "Empty sub-selector" (no bloqueante).
 

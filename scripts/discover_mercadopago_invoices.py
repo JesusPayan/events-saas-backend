@@ -9,7 +9,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--limit', type=int, default=100)
-    parser.add_argument('--page-size', type=int, default=20)
+    parser.add_argument('--page-size', type=int, default=None,
+                        help='Opcional; por defecto se usa el tamaño de página de Mercado Pago')
     parser.add_argument('--max-pages', type=int, default=20)
     args = parser.parse_args()
     app = create_app()

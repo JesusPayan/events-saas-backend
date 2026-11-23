@@ -4,18 +4,24 @@ Marca cada punto con evidencia (fecha, responsable, enlace a log o captura).
 
 ## Bloqueadores (todos obligatorios)
 
-- [ ] **Rotar credenciales expuestas** en el `.env` que estuvo versionado en repos públicos: contraseña de
+- [x] **Rotar credenciales expuestas** (confirmado por el propietario el 2026-11-23) en el `.env` que estuvo versionado en repos públicos: contraseña de
       aplicación de Gmail (SMTP), `JWT_SECRET_KEY`, `SECRET_KEY`, `SIGNATURE_OTP_SECRET`, `MP_WEBHOOK_SECRET`,
       `MP_ACCESS_TOKEN` y la contraseña de MySQL incluida en las URLs.
 - [ ] Decidir si se reescribe el historial de Git para eliminar el `.env` (requiere force-push; la rotación
       es obligatoria de todos modos).
 - [ ] Merge de la rama de endurecimiento con CI en verde (backend y frontend).
 - [ ] Proteger ramas `master`/`development` (PR + CI obligatorios).
-- [ ] Prueba de extremo a extremo de Mercado Pago en staging (ver `docs/MERCADOPAGO.md`), incluida la
-      verificación del formato real de `authorized_payments`.
-- [ ] Decisión comercial: periodo de prueba / acceso antes del primer pago, y si se activa
-      `BILLING_ENFORCE_ENTITLEMENTS=true` en el lanzamiento.
-- [ ] Infraestructura aprobada y creada (dominio, TLS, MySQL administrado, Redis, almacenamiento persistente).
+- [x] Pago real en sandbox: checkout, cobro aprobado, verificación del formato de `authorized_payments` y
+      activación (2026-11-22, ver `docs/MERCADOPAGO.md`).
+- [ ] Recepción del webhook de Mercado Pago (no llegó en la prueba local) y repetición completa en staging.
+- [x] Decisión comercial (2026-11-23): sin pago, nivel **Gratuito** con funciones básicas; al cancelar se
+      conserva el acceso hasta el final del periodo pagado.
+- [ ] Sembrar el nivel gratuito (`scripts.seed_billing_catalog`) **antes** de activar
+      `BILLING_ENFORCE_ENTITLEMENTS=true`; si no existe, las empresas sin pago quedan bloqueadas.
+- [ ] Confirmar los límites del plan Gratuito (por defecto: 1 usuario, 25 clientes, 10 eventos, inventario,
+      cotizaciones y contratos; sin reportes avanzados ni API).
+- [x] Arquitectura elegida: opción A (servidor + Docker Compose + MySQL administrado), implementada y probada en local (`deploy/`).
+- [ ] Proveedor, dominio y presupuesto aprobados; recursos creados.
 - [ ] Backups automáticos activos y **una restauración probada** (`docs/OPERACION.md`).
 - [ ] Monitoreo de `/health` y `/ready` y alertas de 5xx configurados.
 - [ ] `BILLING_OPERATOR_USER_IDS` configurado con la cuenta del operador.

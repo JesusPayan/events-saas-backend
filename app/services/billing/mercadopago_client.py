@@ -7,6 +7,7 @@ Las llamadas de red deben simularse en pruebas unitarias.
 
 import json
 import logging
+import re
 import urllib.error
 import urllib.request
 
@@ -15,6 +16,34 @@ from flask import current_app
 logger = logging.getLogger(__name__)
 
 MAX_RESPONSE_BYTES = 1024 * 1024
+
+
+_EMAIL = re.compile(r"[^@\s\"']+@[^@\s\"']+")
+_LONG_TOKEN = re.compile(r"[A-Za-z0-9_\-]{24,}")
+
+
+def _safe_error_detail(exc):
+    """Resumen del error de Mercado Pago para diagnóstico, sin datos sensibles.
+
+    Solo conserva ``message``/``error`` y los códigos de ``cause``; enmascara
+    correos y cadenas largas (tokens/IDs) y limita la longitud.
+    """
+    try:
+        body = json.loads(exc.read(16 * 1024) or b"{}")
+    except Exception:
+        return "-"
+    if not isinstance(body, dict):
+        return "-"
+    parts = [str(body.get("message") or body.get("error") or "")]
+    causes = body.get("cause")
+    if isinstance(causes, list):
+        for cause in causes[:3]:
+            if isinstance(cause, dict):
+                parts.append(f"cause={cause.get('code')}:{cause.get('description') or ''}")
+    text = " | ".join(p for p in parts if p)
+    text = _EMAIL.sub("<email>", text)
+    text = _LONG_TOKEN.sub("<redacted>", text)
+    return text[:300] or "-"
 
 
 class MPError(Exception):
@@ -81,10 +110,11 @@ def api(method, path, payload=None, *, idempotency_key=None):
             code = "mercadopago_http_error"
 
         logger.warning(
-            "Mercado Pago HTTP error: method=%s status=%s code=%s",
+            "Mercado Pago HTTP error: method=%s status=%s code=%s detail=%s",
             method,
             status,
             code,
+            _safe_error_detail(exc),
         )
 
         raise MPError(code, status_code=status) from exc

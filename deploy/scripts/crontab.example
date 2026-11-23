@@ -1,0 +1,7 @@
+# /etc/cron.d/eventos  (zona horaria del servidor: UTC)
+# Backup diario 08:15 UTC (02:15 en Ciudad de México)
+15 8 * * * root /opt/eventos/deploy/scripts/backup.sh >> /var/log/eventos-backup.log 2>&1
+# Conciliación diaria con Mercado Pago 09:05 UTC (un solo proceso)
+5 9 * * * root cd /opt/eventos/deploy && flock -n /run/eventos-reconcile.lock docker compose --env-file env/stack.env exec -T backend python -m scripts.reconcile_mercadopago --apply >> /var/log/eventos-reconcile.log 2>&1
+# Prueba de restauración semanal (domingo) sobre el backup más reciente
+30 10 * * 0 root /opt/eventos/deploy/scripts/restore-check.sh "$(ls -1d /var/backups/eventos/*/ | tail -1)" >> /var/log/eventos-restore-check.log 2>&1

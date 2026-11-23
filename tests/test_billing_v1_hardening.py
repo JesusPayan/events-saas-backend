@@ -401,3 +401,177 @@ def test_proxy_fix_uses_real_client_ip(monkeypatch):
                                   environ_base={'REMOTE_ADDR': '10.0.0.2'}):
         app.wsgi_app(request.environ, lambda *a, **k: None)
         assert request.environ['REMOTE_ADDR'] == '203.0.113.7'
+
+
+
+# ------------------------------------------------------------------
+# Política comercial v1.0: nivel gratuito y cancelación al fin del periodo
+# ------------------------------------------------------------------
+
+def test_free_tier_applies_without_subscription(client):
+    from app.services.billing.catalog_seed import seed_free_tier
+    from app.services.billing.entitlements_service import entitlement
+    tenant, headers = _owner(client, 'v1-free@example.test', 'v1-free')
+    with client.application.app_context():
+        assert entitlement(tenant, 'clients')['reason'] == 'not_subscribed'  # fail-closed sin sembrar
+        assert seed_free_tier() == {'plans': 1, 'entitlements': 7}
+        assert seed_free_tier() == {'plans': 0, 'entitlements': 0}
+        decision = entitlement(tenant, 'clients')
+        assert decision['allowed'] is True and decision['tier'] == 'free' and decision['limit'] == 25
+        assert entitlement(tenant, 'advanced_reports')['reason'] == 'feature_disabled'
+    plans = client.get('/api/v1/billing/plans', headers=headers).json['items']
+    assert all(p['code'] != 'free' for p in plans)
+    usage = client.get('/api/v1/billing/usage', headers=headers).json
+    assert usage['tier'] == 'free' and any(i['feature_code'] == 'clients' for i in usage['items'])
+
+
+def test_free_tier_limit_enforced_on_create(client):
+    from app.services.billing.catalog_seed import seed_free_tier
+    from app.models.billing import BillingPlanEntitlement
+    tenant, headers = _owner(client, 'v1-free-lim@example.test', 'v1-free-lim')
+    with client.application.app_context():
+        seed_free_tier()
+        free = db.session.scalar(select(BillingPlan).where(BillingPlan.code == 'free'))
+        ent = db.session.scalar(select(BillingPlanEntitlement).where(
+            BillingPlanEntitlement.plan_id == free.id, BillingPlanEntitlement.feature_code == 'clients'))
+        ent.limit_value = 1
+        db.session.commit()
+    client.application.config['BILLING_ENFORCE_ENTITLEMENTS'] = True
+    try:
+        body = {'client_type': 'individual', 'first_name': 'Ana', 'last_name': 'Uno', 'email': 'ana1@example.test'}
+        first = client.post('/api/v1/clients', headers=headers, json=body)
+        assert first.status_code == 201, first.json
+        second = client.post('/api/v1/clients', headers=headers, json=dict(body, email='ana2@example.test'))
+        assert second.status_code == 403
+        assert second.json['reason'] == 'limit_reached' and second.json['tier'] == 'free'
+    finally:
+        client.application.config['BILLING_ENFORCE_ENTITLEMENTS'] = False
+
+
+def test_canceled_subscription_keeps_access_until_period_end(client):
+    from datetime import timedelta
+    from app.services.billing.entitlements_service import entitlement
+    from app.models.billing import BillingPlanEntitlement
+    tenant, headers = _owner(client, 'v1-cend@example.test', 'v1-cend')
+    with client.application.app_context():
+        price = _price()
+        db.session.add(BillingPlanEntitlement(plan_id=price.plan_id, feature_code='clients', limit_value=100))
+        db.session.commit()
+        _checkout(tenant, price)
+        with patch(API, return_value=_invoice('inv-cend')):
+            assert reconcile_payment('inv-cend') is True
+    remote = {'id': 'mp-sub-v1', 'external_reference': 'ref-mp-sub-v1', 'status': 'cancelled'}
+    with patch(API, return_value=remote):
+        assert client.post('/api/v1/billing/mercadopago/cancel', headers=headers).status_code == 200
+    with client.application.app_context():
+        sub = db.session.query(TenantSubscription).one()
+        assert sub.status == 'canceled' and sub.ended_at == sub.current_period_end
+        during = entitlement(tenant, 'clients')
+        assert during['allowed'] is True and during['tier'] == 'paid' and during['limit'] == 100
+        after = entitlement(tenant, 'clients', at=sub.current_period_end + timedelta(seconds=1))
+        assert after['allowed'] is False and after['reason'] == 'subscription_inactive'
+
+
+
+def test_preapproval_frequency_by_interval(client):
+    tenant, headers = _owner(client, 'v1-freq@example.test', 'v1-freq')
+    client.application.config.update(MP_ACCESS_TOKEN='t', MP_BACK_URL='https://example.test/billing/return')
+    with client.application.app_context():
+        annual_id = _price('2511.60', interval='year', code='v1-annual').id
+    with patch(API, return_value={'id': 'mp-annual', 'init_point': 'https://mp.example/a'}) as provider:
+        r = client.post('/api/v1/billing/mercadopago/checkout', headers=headers,
+                        json={'plan_price_id': annual_id, 'payer_email': 'buyer@example.test'})
+    assert r.status_code == 201, r.json
+    recurring = provider.call_args.args[2]['auto_recurring']
+    assert recurring['frequency_type'] == 'months' and recurring['frequency'] == 12
+    assert recurring['transaction_amount'] == 2511.6
+
+
+def test_provider_error_detail_is_sanitized():
+    import io
+    import urllib.error
+    from app.services.billing.mercadopago_client import _safe_error_detail
+    body = (b'{"message":"Invalid payer_email buyer@example.com","status":400,'
+            b'"cause":[{"code":"123","description":"token APP_USR-1234567890abcdefghijklmnopqrstuvwxyz"}]}')
+    exc = urllib.error.HTTPError('https://api.mercadopago.com/preapproval', 400, 'Bad Request', {}, io.BytesIO(body))
+    detail = _safe_error_detail(exc)
+    assert 'Invalid payer_email' in detail and 'cause=123' in detail
+    assert 'buyer@example.com' not in detail and 'abcdefghijklmnop' not in detail
+
+
+
+def test_checkout_distinguishes_provider_errors(client):
+    from app.services.billing.mercadopago_client import MPError
+    _, headers = _owner(client, 'v1-err@example.test', 'v1-err')
+    client.application.config.update(MP_ACCESS_TOKEN='t', MP_BACK_URL='https://example.test/billing/return')
+    with client.application.app_context():
+        price_id = _price().id
+    body = {'plan_price_id': price_id, 'payer_email': 'buyer@example.test'}
+    cases = [(MPError('mercadopago_http_error', status_code=400), 'payment_provider_rejected'),
+             (MPError('mercadopago_auth_error', status_code=401), 'payment_provider_misconfigured'),
+             (MPError('mercadopago_server_error', status_code=502), 'payment_provider_unavailable'),
+             (MPError('mercadopago_connection_error'), 'payment_provider_unavailable')]
+    for error, expected in cases:
+        with patch(API, side_effect=error):
+            r = client.post('/api/v1/billing/mercadopago/checkout', headers=headers, json=body)
+        assert r.status_code == 503 and r.json['error'] == expected
+
+
+
+def test_stale_pending_checkout_is_abandoned_and_retry_allowed(client):
+    from datetime import timedelta
+    from app.models.billing import utc_now
+    tenant, headers = _owner(client, 'v1-stale@example.test', 'v1-stale')
+    client.application.config.update(MP_ACCESS_TOKEN='t', MP_BACK_URL='https://example.test/billing/return')
+    with client.application.app_context():
+        price_id = _price().id
+    body = {'plan_price_id': price_id, 'payer_email': 'buyer@example.test'}
+    with patch(API, return_value={'id': 'mp-first', 'init_point': 'https://mp.example/1'}):
+        assert client.post('/api/v1/billing/mercadopago/checkout', headers=headers, json=body).status_code == 201
+    # Recién creado: bloquea un segundo intento sin llamar a Mercado Pago.
+    with patch(API) as provider:
+        r = client.post('/api/v1/billing/mercadopago/checkout', headers=headers, json=body)
+        assert r.status_code == 409 and r.json['error'] == 'checkout_already_pending'
+        provider.assert_not_called()
+    with client.application.app_context():
+        first = db.session.scalar(select(MPCheckout).where(MPCheckout.provider_subscription_id == 'mp-first'))
+        first.created_at = utc_now() - timedelta(minutes=31)
+        db.session.commit()
+    calls = []
+    def fake(method, path, payload=None, **kw):
+        calls.append((method, path, payload))
+        return {'id': 'mp-second', 'init_point': 'https://mp.example/2'} if method == 'POST' else {}
+    with patch(API, side_effect=fake):
+        assert client.post('/api/v1/billing/mercadopago/checkout', headers=headers, json=body).status_code == 201
+    assert calls[0] == ('PUT', '/preapproval/mp-first', {'status': 'cancelled'})
+    with client.application.app_context():
+        statuses = {c.provider_subscription_id: c.status for c in db.session.scalars(select(MPCheckout))}
+        assert statuses == {'mp-first': 'abandoned', 'mp-second': 'pending'}
+
+
+def test_authorized_checkout_never_expires(client):
+    from datetime import timedelta
+    from app.models.billing import utc_now
+    tenant, headers = _owner(client, 'v1-auth@example.test', 'v1-auth')
+    client.application.config.update(MP_ACCESS_TOKEN='t', MP_BACK_URL='https://example.test/billing/return')
+    with client.application.app_context():
+        price = _price()
+        _checkout(tenant, price, provider_id='mp-auth', status='authorized')
+        c = db.session.scalar(select(MPCheckout).where(MPCheckout.provider_subscription_id == 'mp-auth'))
+        c.created_at = utc_now() - timedelta(days=2)
+        db.session.commit()
+        price_id = price.id
+    with patch(API) as provider:
+        r = client.post('/api/v1/billing/mercadopago/checkout', headers=headers,
+                        json={'plan_price_id': price_id, 'payer_email': 'buyer@example.test'})
+        assert r.status_code == 409
+        provider.assert_not_called()
+
+
+def test_late_payment_on_abandoned_checkout_still_activates(client):
+    tenant, _ = _owner(client, 'v1-late@example.test', 'v1-late')
+    with client.application.app_context():
+        _checkout(tenant, _price(), provider_id='mp-sub-v1', status='abandoned')
+        with patch(API, return_value=_invoice('inv-late')):
+            assert reconcile_payment('inv-late') is True
+        assert db.session.query(TenantSubscription).one().status == 'active'

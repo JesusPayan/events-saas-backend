@@ -31,6 +31,14 @@ aviso al cliente y un procedimiento específico con Mercado Pago.
   hora, revisa el recurso en el panel de Mercado Pago y ejecuta
   `python -m scripts.reconcile_mercadopago --apply`.
 
+## Política comercial y plan Gratuito
+
+- Las empresas sin suscripción vigente usan el plan **Gratuito** (`billing_plans.code = 'free'`), que no se
+  vende ni aparece en el catálogo. Sus límites están en `billing_plan_entitlements` y se pueden ajustar en
+  MySQL; la siembra nunca sobrescribe valores existentes.
+- Al cancelar, la empresa conserva el plan pagado hasta "Pagado hasta" y luego pasa al plan Gratuito.
+- Los límites solo se aplican con `BILLING_ENFORCE_ENTITLEMENTS=true`.
+
 ## Estados de suscripción
 
 | Estado | Significado |
@@ -38,4 +46,4 @@ aviso al cliente y un procedimiento específico con Mercado Pago.
 | Activa | Pago verificado; acceso hasta "Pagado hasta" |
 | Pago pendiente (`past_due`) | Falló un cobro de renovación y el periodo pagado terminó |
 | Pausada | Pausada en Mercado Pago |
-| Cancelada | Cancelación confirmada por Mercado Pago |
+| Cancelada | Cancelación confirmada por Mercado Pago; acceso hasta el fin del periodo pagado, luego plan Gratuito |

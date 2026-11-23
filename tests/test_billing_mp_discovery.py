@@ -43,3 +43,37 @@ def test_discovery_rejects_invalid_limits(client):
             pass
         else:
             raise AssertionError('must reject invalid limit')
+
+
+def test_discovery_default_omits_limit_and_pages_by_offset(client):
+    """Mercado Pago rejected limit=20 (400 'Invalid value for limit'): by default
+    the request carries no limit and pages with the provider's own page size."""
+    from unittest.mock import patch
+    from decimal import Decimal
+    from app.extensions import db
+    from app.models.billing import BillingPlan, BillingPlanPrice
+    from app.models.mercadopago import MPCheckout
+    from app.services.billing.mercadopago_discovery import discover_invoices
+    from tests.test_identity import register
+    tenant = register(client, 'disc-nolimit@example.test', 'disc-nolimit').json['tenant_id']
+    with client.application.app_context():
+        plan = BillingPlan(code='disc-nolimit', name='P', active=True)
+        db.session.add(plan); db.session.flush()
+        price = BillingPlanPrice(plan_id=plan.id, currency='MXN', billing_interval='month', amount=Decimal('299'), active=True)
+        db.session.add(price); db.session.flush()
+        db.session.add(MPCheckout(tenant_id=tenant, plan_price_id=price.id, payer_email='b@example.test',
+                                  external_reference='ref-nolimit', provider_subscription_id='sub-nolimit', status='authorized'))
+        db.session.commit()
+        paths = []
+        pages = [
+            {'results': [{'id': 101, 'preapproval_id': 'sub-nolimit', 'payment': {'status': 'rejected'}}], 'paging': {'total': 2}},
+            {'results': [{'id': 102, 'preapproval_id': 'sub-nolimit', 'payment': {'status': 'rejected'}}], 'paging': {'total': 2}},
+        ]
+        def fake(method, path, payload=None, **kw):
+            paths.append(path)
+            return pages[len(paths) - 1]
+        with patch('app.services.billing.mercadopago_discovery.api', side_effect=fake):
+            report = discover_invoices()
+        assert all('limit=' not in p for p in paths)
+        assert 'offset' not in paths[0] and 'offset=1' in paths[1]
+        assert report['invoices'] == 2 and report['incomplete'] == 0 and report['errors'] == 0

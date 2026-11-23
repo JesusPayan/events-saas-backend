@@ -11,7 +11,7 @@ import os
 from sqlalchemy.engine import make_url
 from app import create_app
 from app.extensions import db
-from app.services.billing.catalog_seed import seed_billing_catalog
+from app.services.billing.catalog_seed import seed_billing_catalog, seed_free_tier
 
 
 def main(argv=None):
@@ -40,6 +40,7 @@ def main(argv=None):
                 raise SystemExit(f"Bloqueado: FLASK_ENV={environment} requiere MySQL {expected}; recibido {url.database!r}")
         try:
             print("Seed completed:", seed_billing_catalog())
+            print("Free tier:", seed_free_tier())
         finally:
             db.session.remove()
 

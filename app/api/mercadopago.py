@@ -28,8 +28,20 @@ def checkout():
         return jsonify(create_checkout(g.tenant_id, body['plan_price_id'], body['payer_email'])), 201
     except BillingMPError as exc:
         return jsonify(error=exc.code), exc.status
-    except (MPError, KeyError):
+    except MPError as exc:
+        return jsonify(error=_provider_error_code(exc)), 503
+    except KeyError:
         return jsonify(error='payment_provider_unavailable'), 503
+
+
+def _provider_error_code(exc):
+    """Distingue para la UI: credenciales inválidas, solicitud rechazada o caída."""
+    status = getattr(exc, 'status_code', None)
+    if status in (401, 403) or exc.code == 'mercadopago_not_configured':
+        return 'payment_provider_misconfigured'
+    if status is not None and 400 <= status < 500 and status != 429:
+        return 'payment_provider_rejected'
+    return 'payment_provider_unavailable'
 
 @bp.get('/billing/mercadopago/checkout/latest')
 @tenant_permission('tenant.read')

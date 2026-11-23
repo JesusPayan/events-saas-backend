@@ -7,7 +7,8 @@
 3. **Suscripción**: en *Suscripción > Planes y precios* elige mensual o anual y pulsa *Contratar*. Pagarás en
    Mercado Pago; al regresar, la app confirmará el pago automáticamente (puede tardar unos minutos).
    En *Mi suscripción* ves el estado, la fecha hasta la que está pagado y el uso de tu plan. El propietario
-   puede cancelar desde ahí.
+   puede cancelar desde ahí: se detienen los cobros y conservas el acceso hasta el final del periodo pagado.
+   Sin suscripción, tu empresa usa el **plan Gratuito** con funciones básicas.
 4. **Operación diaria**: Clientes → Eventos (con calendario) → Cotizaciones → Contratos (firma electrónica,
    pagos y comprobantes) → Inventario (reservas, movimientos, incidencias y cargos) → Logística (preparación,
    despacho, entrega y devolución).

@@ -3,7 +3,8 @@ import hashlib
 import hmac
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import logging
 from decimal import Decimal, InvalidOperation
 from urllib.parse import quote
 from flask import current_app
@@ -13,6 +14,28 @@ from app.extensions import db
 from app.models.billing import BillingPlanPrice, BillingPlan, TenantSubscription, SubscriptionAudit, utc_now
 from app.models.mercadopago import MPCheckout, MPWebhookEvent, MPPayment
 from app.services.billing.mercadopago_client import api, MPError
+
+logger = logging.getLogger(__name__)
+
+
+def _abandon_checkout(checkout):
+    """Libera un checkout pendiente que el comprador nunca autorizó.
+
+    Intenta cancelar la preaprobación en Mercado Pago para que el enlace viejo no
+    pueda pagarse después. Si Mercado Pago no responde, se marca igualmente: un pago
+    tardío sobre ese enlace no se pierde, queda como incidencia de conciliación.
+    """
+    if checkout.provider_subscription_id:
+        try:
+            api('PUT', '/preapproval/' + quote(str(checkout.provider_subscription_id), safe=''),
+                {'status': 'cancelled'},
+                idempotency_key='abandon-' + checkout.external_reference)
+        except MPError as exc:
+            logger.warning('No se pudo cancelar en Mercado Pago un checkout abandonado: checkout_id=%s code=%s',
+                           checkout.id, exc.code)
+    checkout.status = 'abandoned'
+    db.session.commit()
+
 
 class BillingMPError(Exception):
     def __init__(self, code, status=400):
@@ -85,9 +108,16 @@ def create_checkout(tenant_id, price_id, payer_email):
     current = db.session.scalar(select(TenantSubscription).where(TenantSubscription.tenant_id == tenant_id, TenantSubscription.status.in_(['active','trialing','past_due','paused'])).limit(1))
     if current:
         raise BillingMPError('subscription_already_exists', 409)
-    pending = db.session.scalar(select(MPCheckout).where(MPCheckout.tenant_id == tenant_id, MPCheckout.status.in_(['pending','authorized'])).limit(1))
+    pending = db.session.scalar(select(MPCheckout).where(MPCheckout.tenant_id == tenant_id, MPCheckout.status.in_(['pending','authorized'])).order_by(MPCheckout.id.desc()).limit(1).with_for_update())
     if pending:
-        raise BillingMPError('checkout_already_pending', 409)
+        ttl = int(current_app.config.get('MP_CHECKOUT_PENDING_TTL_MINUTES', 30))
+        expired = (pending.status == 'pending' and pending.created_at is not None
+                   and pending.created_at <= utc_now() - timedelta(minutes=ttl))
+        if not expired:
+            # 'authorized' nunca caduca aquí: el comprador ya autorizó y el cobro está en curso.
+            db.session.rollback()
+            raise BillingMPError('checkout_already_pending', 409)
+        _abandon_checkout(pending)
     if not current_app.config.get('MP_BACK_URL', '').startswith('https://'):
         raise BillingMPError('invalid_return_url', 503)
     reference = 'evsaas-' + uuid.uuid4().hex
@@ -99,7 +129,9 @@ def create_checkout(tenant_id, price_id, payer_email):
             'reason': f'Eventos SaaS - {plan.name}',
             'external_reference': reference,
             'payer_email': payer_email,
-            'auto_recurring': {'frequency': 1, 'frequency_type': 'months' if price.billing_interval == 'month' else 'years',
+            # La API de preaprobación solo admite frequency_type 'days' o 'months':
+            # el plan anual se expresa como 12 meses.
+            'auto_recurring': {'frequency': 1 if price.billing_interval == 'month' else 12, 'frequency_type': 'months',
                                'transaction_amount': float(price.amount), 'currency_id': 'MXN'},
             'back_url': current_app.config['MP_BACK_URL'],
             'status': 'pending',
@@ -128,7 +160,10 @@ def reconcile_preapproval(provider_id):
             old = sub.status
             sub.status = 'canceled'
             sub.canceled_at = utc_now()
-            sub.ended_at = sub.canceled_at
+            # Política: el acceso pagado se conserva hasta el final del periodo ya cobrado.
+            sub.ended_at = (sub.current_period_end
+                            if sub.current_period_end and sub.current_period_end > sub.canceled_at
+                            else sub.canceled_at)
             db.session.add(SubscriptionAudit(tenant_id=sub.tenant_id, subscription_id=sub.id, old_status=old, new_status='canceled', action='mp_canceled'))
     elif status == 'authorized':
         if checkout.status not in ('active', 'canceled'):
