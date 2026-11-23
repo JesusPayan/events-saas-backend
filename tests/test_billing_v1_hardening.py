@@ -497,3 +497,21 @@ def test_provider_error_detail_is_sanitized():
     detail = _safe_error_detail(exc)
     assert 'Invalid payer_email' in detail and 'cause=123' in detail
     assert 'buyer@example.com' not in detail and 'abcdefghijklmnop' not in detail
+
+
+
+def test_checkout_distinguishes_provider_errors(client):
+    from app.services.billing.mercadopago_client import MPError
+    _, headers = _owner(client, 'v1-err@example.test', 'v1-err')
+    client.application.config.update(MP_ACCESS_TOKEN='t', MP_BACK_URL='https://example.test/billing/return')
+    with client.application.app_context():
+        price_id = _price().id
+    body = {'plan_price_id': price_id, 'payer_email': 'buyer@example.test'}
+    cases = [(MPError('mercadopago_http_error', status_code=400), 'payment_provider_rejected'),
+             (MPError('mercadopago_auth_error', status_code=401), 'payment_provider_misconfigured'),
+             (MPError('mercadopago_server_error', status_code=502), 'payment_provider_unavailable'),
+             (MPError('mercadopago_connection_error'), 'payment_provider_unavailable')]
+    for error, expected in cases:
+        with patch(API, side_effect=error):
+            r = client.post('/api/v1/billing/mercadopago/checkout', headers=headers, json=body)
+        assert r.status_code == 503 and r.json['error'] == expected
