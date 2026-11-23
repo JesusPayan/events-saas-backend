@@ -85,9 +85,8 @@ Ruta crítica: 1 → 2 → 4 → 5 → 6 → 7 → 10. Total pendiente estimado:
 
 ## 6. Riesgos pendientes
 
-- Formato real de `GET /authorized_payments/{id}` no verificado contra la API viva (red bloqueada en el entorno
-  de esta entrega). Si no trae `payment.status`, ninguna suscripción se activará (falla cerrada), no habrá
-  activaciones indebidas. Verificar en staging.
+- Formato de `authorized_payments` verificado con la API real en sandbox (2026-11-22). Pendiente: recepción
+  del webhook (la activación se hizo con el script de conciliación).
 - La firma de webhook rechaza entregas con más de 5 minutos de antigüedad; si Mercado Pago reutiliza `ts` en
   reintentos, esos reintentos se rechazarán (la conciliación diaria lo cubre).
 - La sesión vive solo en memoria (recargar = volver a entrar). Seguro, pero incómodo.

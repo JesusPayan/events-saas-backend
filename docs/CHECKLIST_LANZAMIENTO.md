@@ -11,8 +11,9 @@ Marca cada punto con evidencia (fecha, responsable, enlace a log o captura).
       es obligatoria de todos modos).
 - [ ] Merge de la rama de endurecimiento con CI en verde (backend y frontend).
 - [ ] Proteger ramas `master`/`development` (PR + CI obligatorios).
-- [ ] Prueba de extremo a extremo de Mercado Pago en staging (ver `docs/MERCADOPAGO.md`), incluida la
-      verificación del formato real de `authorized_payments`.
+- [x] Pago real en sandbox: checkout, cobro aprobado, verificación del formato de `authorized_payments` y
+      activación (2026-11-22, ver `docs/MERCADOPAGO.md`).
+- [ ] Recepción del webhook de Mercado Pago (no llegó en la prueba local) y repetición completa en staging.
 - [x] Decisión comercial (2026-11-23): sin pago, nivel **Gratuito** con funciones básicas; al cancelar se
       conserva el acceso hasta el final del periodo pagado.
 - [ ] Sembrar el nivel gratuito (`scripts.seed_billing_catalog`) **antes** de activar

@@ -53,7 +53,19 @@ En el panel de Mercado Pago (Tus integraciones > tu aplicación > Webhooks):
 Usa una aplicación/credenciales de prueba para staging y otras de producción. Nunca mezcles tokens.
 Cloudflare Tunnel solo sirve para pruebas locales; producción requiere un dominio propio con TLS.
 
-## Prueba de extremo a extremo (pendiente — requiere tus credenciales)
+## Evidencia en sandbox (2026-11-22, entorno local del propietario)
+
+- Checkout Básico mensual → `201`; pago aprobado por el comprador de prueba en Mercado Pago ($299 MXN).
+- La API real devolvió la factura con el objeto anidado `payment.status = "approved"` (formato validado).
+- Conciliación (`scripts.discover_mercadopago_invoices --apply`): suscripción `active` por un mes,
+  `billing_mp_payments` con el pago `approved` de 299.00 y auditoría `mp_payment_verified`.
+- Hallazgos corregidos durante la prueba: frecuencia anual inválida (`years`), paginación de búsqueda de
+  facturas (`limit` rechazado), mensajes de error del proveedor y bloqueo permanente por checkouts abandonados.
+- **Pendiente:** recepción del webhook. No llegó ninguna notificación al backend; revisar la configuración del
+  webhook en la aplicación del vendedor de prueba (URL del túnel, eventos y clave) y repetir la prueba.
+- Si Mercado Pago responde `429 local_rate_limited`, esperar unos minutos y reintentar.
+
+## Prueba de extremo a extremo (repetir en staging)
 
 No pudo ejecutarse desde el entorno de desarrollo de esta entrega (sin acceso de red a Mercado Pago ni
 credenciales). Debe hacerse en **staging** con credenciales de prueba y usuarios de prueba
