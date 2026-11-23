@@ -26,7 +26,7 @@ Opciones razonables (elige una):
 
 | Opción | Cómputo | MySQL | Comentario |
 |---|---|---|---|
-| **A (elegida el 2026-11-23)** | 1 VM (2 vCPU / 4 GB) con Docker Compose | MySQL administrado del mismo proveedor | Simple, barata, reproducible. Implementada en `deploy/` |
+| **A (elegida el 2026-11-23; proveedor: Linode / Akamai Cloud, ver `deploy/LINODE.md`)** | 1 VM (2 vCPU / 4 GB) con Docker Compose | MySQL administrado del mismo proveedor | Simple, barata, reproducible. Implementada en `deploy/` |
 | B | Plataforma de contenedores administrada (App Platform, Cloud Run, ECS) | MySQL administrado | Menos operación, revisar volumen persistente para uploads (usar almacenamiento de objetos) |
 
 Requisitos indispensables en cualquier opción: dominio propio, TLS válido, MySQL con backups automáticos y

@@ -44,6 +44,8 @@ services:
       UPLOAD_FOLDER_PROD: /data/uploads
     volumes:
       - uploads:/data/uploads
+      # Certificado CA de la base administrada (p. ej. Linode): env/certs/db-ca.pem
+      - ./env/certs:/etc/eventos/certs:ro
     depends_on:
       redis:
         condition: service_healthy

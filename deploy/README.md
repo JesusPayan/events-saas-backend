@@ -1,5 +1,7 @@
 # Despliegue — Opción A (un servidor + MySQL administrado)
 
+> Proveedor elegido: **Linode (Akamai Cloud)**. Guía paso a paso: [`LINODE.md`](LINODE.md).
+
 Probado de extremo a extremo en local el 2026-11-23 con las imágenes de producción: Caddy (TLS) → nginx
 (frontend) → gunicorn (backend) → MySQL 8 + Redis. Probados: script de despliegue, migraciones, siembra,
 cabeceras de seguridad, CSP en navegador, límite de intentos por IP real, rechazo de webhooks sin firma,

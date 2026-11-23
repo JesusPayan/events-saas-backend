@@ -351,7 +351,7 @@ def test_production_config_fails_closed(monkeypatch):
     with pytest.raises(RuntimeError) as exc:
         _validate_production_config(app)
     message = str(exc.value)
-    for expected in ('SECRET_KEY', 'MP_ACCESS_TOKEN', 'MP_BACK_URL', 'CORS_ORIGINS', 'RATELIMIT_STORAGE_URI'):
+    for expected in ('SECRET_KEY', 'MP_ACCESS_TOKEN', 'MP_BACK_URL', 'CORS_ORIGINS', 'RATELIMIT_STORAGE_URI', 'TLS'):
         assert expected in message
     strong = 'x' * 40
     for key in ('SECRET_KEY', 'JWT_SECRET_KEY', 'SIGNATURE_OTP_SECRET'):
@@ -360,7 +360,7 @@ def test_production_config_fails_closed(monkeypatch):
     monkeypatch.setenv('FRONTEND_PUBLIC_URL', 'https://app.example.com')
     app.config.update(MP_ACCESS_TOKEN='APP_USR-x', MP_WEBHOOK_SECRET='y' * 32,
                       MP_BACK_URL='https://app.example.com/billing/return',
-                      RATELIMIT_STORAGE_URI='redis://cache:6379/0')
+                      RATELIMIT_STORAGE_URI='redis://cache:6379/0', DB_TLS_CONFIGURED=True)
     _validate_production_config(app)
 
 
@@ -575,3 +575,23 @@ def test_late_payment_on_abandoned_checkout_still_activates(client):
         with patch(API, return_value=_invoice('inv-late')):
             assert reconcile_payment('inv-late') is True
         assert db.session.query(TenantSubscription).one().status == 'active'
+
+
+
+def test_db_tls_context_verifies_provider_ca(monkeypatch, tmp_path):
+    import ssl
+    from flask import Flask
+    from app import _configure_db_tls
+    app = Flask('tls')
+    monkeypatch.delenv('DB_SSL_CA', raising=False)
+    _configure_db_tls(app)
+    assert 'DB_TLS_CONFIGURED' not in app.config
+    ca = tmp_path / 'ca.pem'
+    import certifi  # bundle de CA válido para construir el contexto en la prueba
+    ca.write_text(open(certifi.where()).read())
+    monkeypatch.setenv('DB_SSL_CA', str(ca))
+    _configure_db_tls(app)
+    ctx = app.config['SQLALCHEMY_ENGINE_OPTIONS']['connect_args']['ssl']
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname is True
+    assert not ctx.verify_flags & getattr(ssl, 'VERIFY_X509_STRICT', 0)
+    assert app.config['DB_TLS_CONFIGURED'] is True
