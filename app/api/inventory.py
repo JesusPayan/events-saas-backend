@@ -1,3 +1,4 @@
+from app.services.billing.guards import require_entitlement
 
 from decimal import Decimal, InvalidOperation
 
@@ -43,6 +44,7 @@ ALLOWED_FIELDS = {
 
 @bp.get("/inventory/reports/movements/export")
 @tenant_permission("inventory.read")
+@require_entitlement("advanced_reports")
 def inventory_movement_report_export():
     try:
         raw_from = request.args.get("date_from")
@@ -100,6 +102,7 @@ def inventory_movement_report_export():
 
 @bp.get("/inventory/reports/availability/export")
 @tenant_permission("inventory.read")
+@require_entitlement("advanced_reports")
 def inventory_availability_report_export():
     try:
         starts_at = parse_report_datetime(
@@ -678,6 +681,7 @@ EXCEL_MIMETYPE = (
 
 @bp.get("/inventory/reports/movements/export.xlsx")
 @tenant_permission("inventory.read")
+@require_entitlement("advanced_reports")
 def inventory_movement_report_excel_export():
     try:
         raw_from = request.args.get("date_from")
@@ -735,6 +739,7 @@ def inventory_movement_report_excel_export():
 
 @bp.get("/inventory/reports/availability/export.xlsx")
 @tenant_permission("inventory.read")
+@require_entitlement("advanced_reports")
 def inventory_availability_report_excel_export():
     try:
         starts_at = parse_report_datetime(

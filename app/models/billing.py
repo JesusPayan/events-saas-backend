@@ -86,3 +86,21 @@ class SubscriptionAudit(db.Model):
         ForeignKeyConstraint(["tenant_id", "subscription_id"], ["tenant_subscriptions.tenant_id", "tenant_subscriptions.id"], name="fk_subscription_audit_same_tenant"),
         db.Index("ix_subscription_audits_tenant_subscription", "tenant_id", "subscription_id"),
     )
+
+
+class BillingPriceAudit(db.Model):
+    """Immutable record of every operator price change (who, when, old/new)."""
+    __tablename__ = "billing_price_audits"
+    id = db.Column(db.BigInteger().with_variant(db.Integer, "sqlite"), primary_key=True, autoincrement=True)
+    plan_id = db.Column(db.BigInteger, db.ForeignKey("billing_plans.id"), nullable=False)
+    plan_price_id = db.Column(db.BigInteger, db.ForeignKey("billing_plan_prices.id"), nullable=False)
+    previous_price_id = db.Column(db.BigInteger, db.ForeignKey("billing_plan_prices.id"))
+    action = db.Column(db.String(30), nullable=False)
+    old_amount = db.Column(db.Numeric(14, 2))
+    new_amount = db.Column(db.Numeric(14, 2))
+    actor_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=utc_now)
+    __table_args__ = (
+        CheckConstraint("action IN ('reprice','activate','deactivate')", name="ck_billing_price_audit_action"),
+        db.Index("ix_billing_price_audits_plan", "plan_id", "id"),
+    )

@@ -1,4 +1,5 @@
 
+import re
 from datetime import datetime
 
 from flask import Blueprint, request, jsonify, g, current_app
@@ -6,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.models import Tenant
 from app.models.identity import User, Role, Permission, RolePermission, Membership
 from app.security import authenticate, tenant_permission, issue_token
@@ -14,8 +15,25 @@ from app.security import authenticate, tenant_permission, issue_token
 
 bp = Blueprint("auth", __name__)
 
+_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+_SLUG_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?")
+
+# Permisos del rol propietario creado al registrar una empresa.
+OWNER_PERMISSION_CODES = (
+    "tenant.read",
+    "members.read",
+    "billing.manage",
+    "clients.read", "clients.create", "clients.update",
+    "events.read", "events.create", "events.update",
+    "inventory.read", "inventory.create", "inventory.update", "inventory.adjust",
+    "inventory.charges.approve", "inventory.charges.pay",
+    "quotes.create", "quotes.read",
+    "contracts.create", "contracts.read", "contracts.update",
+)
+
 
 @bp.post("/auth/register")
+@limiter.limit(lambda: current_app.config.get("RATELIMIT_REGISTER", "10 per hour"))
 def register():
     data = request.get_json(silent=True)
 
@@ -41,7 +59,12 @@ def register():
         not email
         or not slug
         or len(name) < 3
+        or len(name) > 180
         or len(password) < 12
+        or len(password) > 256
+        or len(email) > 254
+        or not _EMAIL_RE.fullmatch(email)
+        or not _SLUG_RE.fullmatch(slug)
     ):
         return jsonify(error="invalid_registration"), 400
 
@@ -74,58 +97,7 @@ def register():
         db.session.flush()
 
         # 4. Asignar permisos iniciales
-        permission_codes = (
-            # Empresa
-            "tenant.read",
-
-            # Miembros
-            "members.read",
-
-            # Clientes
-            "clients.read",
-            "clients.create",
-            "clients.update",
-
-            # Eventos
-            "events.read",
-            "events.create",
-            "events.update",
-
-            # Inventario
-            "inventory.read",
-            "inventory.create",
-            "inventory.update",
-            "inventory.adjust",
-
-            # Cargos
-            "inventory.charges.approve",
-            "inventory.charges.pay",
-            # Eventos
-            "events.read",
-            "events.create",
-            "events.update",
-
-            # Cotizaciones
-            "quotes.create",
-            "quotes.read",
-
-            # Contratos
-            "contracts.create",
-            "contracts.read",
-            "contracts.update",
-
-            # Inventario
-            "inventory.read",
-            "inventory.create",
-            "inventory.update",
-            "inventory.adjust",
-        )
-
-        for code in dict.fromkeys(permission_codes):
-            if len(permission_codes) != len(set(permission_codes)):
-                current_app.logger.warning(
-                    "Se detectaron permisos duplicados en el registro"
-                )
+        for code in OWNER_PERMISSION_CODES:
             permission = db.session.scalar(
                 select(Permission).where(
                     Permission.code == code
@@ -176,6 +148,7 @@ def register():
 
 
 @bp.post("/auth/login")
+@limiter.limit(lambda: current_app.config.get("RATELIMIT_LOGIN", "10 per minute"))
 def login():
     data = request.get_json(silent=True)
 

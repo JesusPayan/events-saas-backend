@@ -131,9 +131,88 @@ def reconcile_preapproval(provider_id):
             sub.ended_at = sub.canceled_at
             db.session.add(SubscriptionAudit(tenant_id=sub.tenant_id, subscription_id=sub.id, old_status=old, new_status='canceled', action='mp_canceled'))
     elif status == 'authorized':
-        checkout.status = 'authorized'  # not active until a verified payment
+        if checkout.status not in ('active', 'canceled'):
+            checkout.status = 'authorized'  # not active until a verified payment
+    elif status == 'paused':
+        sub = db.session.scalar(select(TenantSubscription).where(TenantSubscription.provider == 'mercadopago', TenantSubscription.provider_subscription_id == str(provider_id)).with_for_update())
+        if sub and sub.status in ('active', 'past_due'):
+            old = sub.status
+            sub.status = 'paused'
+            db.session.add(SubscriptionAudit(tenant_id=sub.tenant_id, subscription_id=sub.id, old_status=old, new_status='paused', action='mp_paused'))
     db.session.commit()
     return True
+
+
+def latest_checkout(tenant_id):
+    """Tenant-scoped view of the most recent checkout attempt (no provider data)."""
+    checkout = db.session.scalar(select(MPCheckout).where(MPCheckout.tenant_id == tenant_id)
+                                 .order_by(MPCheckout.id.desc()).limit(1))
+    if checkout is None:
+        return {'checkout': None}
+    return {'checkout': {'id': checkout.id, 'status': checkout.status, 'plan_price_id': checkout.plan_price_id,
+                         'created_at': checkout.created_at.isoformat() if checkout.created_at else None}}
+
+
+def cancel_tenant_subscription(tenant_id, actor_id):
+    """Ask Mercado Pago to cancel, then re-read the provider resource.
+
+    Local state changes ONLY after the provider confirms the cancellation, so a
+    failed or partial provider call never leaves a tenant falsely canceled.
+    """
+    sub = db.session.scalar(select(TenantSubscription).where(
+        TenantSubscription.tenant_id == tenant_id,
+        TenantSubscription.provider == 'mercadopago',
+        TenantSubscription.status.in_(['active', 'trialing', 'past_due', 'paused'])
+    ).order_by(TenantSubscription.id.desc()).limit(1))
+    if sub is None or not sub.provider_subscription_id:
+        # A pending/authorized checkout without a paid subscription can also be withdrawn.
+        checkout = db.session.scalar(select(MPCheckout).where(
+            MPCheckout.tenant_id == tenant_id, MPCheckout.status.in_(['pending', 'authorized']),
+            MPCheckout.provider_subscription_id.is_not(None)).order_by(MPCheckout.id.desc()).limit(1))
+        if checkout is None:
+            raise BillingMPError('subscription_not_found', 404)
+        provider_id = checkout.provider_subscription_id
+    else:
+        provider_id = sub.provider_subscription_id
+    db.session.rollback()
+    api('PUT', '/preapproval/' + quote(str(provider_id), safe=''), {'status': 'cancelled'},
+        idempotency_key='cancel-' + hashlib.sha256(str(provider_id).encode()).hexdigest()[:40])
+    reconcile_preapproval(provider_id)
+    if sub is not None:
+        db.session.refresh(sub)
+        if sub.status != 'canceled':
+            raise BillingMPError('cancellation_not_confirmed', 502)
+        audit = db.session.scalar(select(SubscriptionAudit).where(
+            SubscriptionAudit.subscription_id == sub.id, SubscriptionAudit.action == 'mp_canceled'
+        ).order_by(SubscriptionAudit.id.desc()).limit(1))
+        if audit is not None and audit.actor_id is None:
+            audit.actor_id = actor_id
+            db.session.commit()
+        return {'status': sub.status}
+    return {'status': 'canceled'}
+
+_SETTLED = frozenset(('approved',))
+_REVERSED = frozenset(('refunded', 'charged_back'))
+_FAILED = frozenset(('rejected', 'cancelled', 'canceled'))
+
+
+def effective_payment_status(invoice):
+    """Return the status of the underlying charge of an authorized_payment.
+
+    The invoice's top-level ``status`` (scheduled/processed/recycling/cancelled)
+    only says whether a charge was attempted. ``processed`` does NOT mean the
+    money was collected: the nested ``payment.status`` carries the result
+    (approved, rejected, refunded, charged_back, ...). Fail closed: an invoice
+    without a verifiable charge result is never treated as approved.
+    """
+    nested = invoice.get('payment')
+    if isinstance(nested, dict) and isinstance(nested.get('status'), str):
+        return nested['status'].lower()
+    top = invoice.get('status')
+    if isinstance(top, str) and top.lower() in (_SETTLED | _REVERSED | _FAILED):
+        return top.lower()
+    return 'unverified'
+
 
 def reconcile_payment(payment_id):
     """Verify payment via API; match amount/currency and provider subscription before granting access."""
@@ -163,7 +242,7 @@ def reconcile_payment(payment_id):
         if not price or payment.get('currency_id') != price.currency or amount != price.amount:
             db.session.rollback()
             return False
-        status = payment.get('status')
+        status = effective_payment_status(payment)
         # Re-fetch every time. A payment can later be refunded or charged back.
         existing = db.session.scalar(select(MPPayment).where(
             MPPayment.provider_payment_id == str(payment_id)).with_for_update())
@@ -188,15 +267,32 @@ def reconcile_payment(payment_id):
                 else:
                     db.session.rollback()
                 return True
-            if status in ('approved', 'processed'):
-                if existing.status in ('refunded', 'charged_back'):
+            if status in _SETTLED:
+                if existing.status in _REVERSED:
                     db.session.rollback()  # stale/out-of-order positive notification
                     return False
                 db.session.rollback()
                 return True
             db.session.rollback()
             return False
-        if status not in ('approved', 'processed'):
+        if status not in _SETTLED:
+            if status in _FAILED:
+                sub = db.session.scalar(select(TenantSubscription).where(
+                    TenantSubscription.provider == 'mercadopago',
+                    TenantSubscription.provider_subscription_id == provider_id).with_for_update())
+                if sub is not None:
+                    # Renewal charge failed: keep paid-through access untouched
+                    # (entitlements expire at current_period_end) and mark the
+                    # account past_due once that period is over.
+                    old = sub.status
+                    if sub.status == 'active' and sub.current_period_end and sub.current_period_end <= utc_now():
+                        sub.status = 'past_due'
+                    db.session.add(SubscriptionAudit(
+                        tenant_id=sub.tenant_id, subscription_id=sub.id,
+                        old_status=old, new_status=sub.status,
+                        action='mp_payment_rejected'))
+                    db.session.commit()
+                    return True
             db.session.rollback()
             return False
         sub = db.session.scalar(select(TenantSubscription).where(TenantSubscription.provider == 'mercadopago', TenantSubscription.provider_subscription_id == provider_id).with_for_update())

@@ -1,3 +1,4 @@
+from app.services.billing.guards import require_entitlement
 
 from flask import Blueprint, request, jsonify, g
 from sqlalchemy import select, or_, func
@@ -72,6 +73,7 @@ def list_clients():
 
 @bp.post("/clients")
 @tenant_permission("clients.create")
+@require_entitlement("clients", serialize_creates=True)
 def create_client():
     data, errors = validate_client(
         request.get_json(silent=True)

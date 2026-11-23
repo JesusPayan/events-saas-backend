@@ -30,3 +30,17 @@ class MPPayment(db.Model):
     amount = db.Column(db.Numeric(14,2), nullable=False)
     currency = db.Column(db.String(3), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=utc_now)
+
+
+class MPReconciliationIssue(db.Model):
+    """Webhook resources that could not be reconciled (for operator follow-up)."""
+    __tablename__ = 'billing_mp_reconciliation_issues'
+    id = db.Column(db.BigInteger().with_variant(db.Integer, 'sqlite'), primary_key=True, autoincrement=True)
+    resource_type = db.Column(db.String(60), nullable=False)
+    resource_id = db.Column(db.String(191), nullable=False)
+    reason = db.Column(db.String(60), nullable=False)
+    attempts = db.Column(db.Integer, nullable=False, default=1)
+    first_seen_at = db.Column(db.DateTime, nullable=False, default=utc_now)
+    last_seen_at = db.Column(db.DateTime, nullable=False, default=utc_now)
+    resolved_at = db.Column(db.DateTime)
+    __table_args__ = (db.UniqueConstraint('resource_type', 'resource_id', name='uq_mp_reconciliation_issue_resource'),)
