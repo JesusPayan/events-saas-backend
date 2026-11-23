@@ -515,3 +515,63 @@ def test_checkout_distinguishes_provider_errors(client):
         with patch(API, side_effect=error):
             r = client.post('/api/v1/billing/mercadopago/checkout', headers=headers, json=body)
         assert r.status_code == 503 and r.json['error'] == expected
+
+
+
+def test_stale_pending_checkout_is_abandoned_and_retry_allowed(client):
+    from datetime import timedelta
+    from app.models.billing import utc_now
+    tenant, headers = _owner(client, 'v1-stale@example.test', 'v1-stale')
+    client.application.config.update(MP_ACCESS_TOKEN='t', MP_BACK_URL='https://example.test/billing/return')
+    with client.application.app_context():
+        price_id = _price().id
+    body = {'plan_price_id': price_id, 'payer_email': 'buyer@example.test'}
+    with patch(API, return_value={'id': 'mp-first', 'init_point': 'https://mp.example/1'}):
+        assert client.post('/api/v1/billing/mercadopago/checkout', headers=headers, json=body).status_code == 201
+    # Recién creado: bloquea un segundo intento sin llamar a Mercado Pago.
+    with patch(API) as provider:
+        r = client.post('/api/v1/billing/mercadopago/checkout', headers=headers, json=body)
+        assert r.status_code == 409 and r.json['error'] == 'checkout_already_pending'
+        provider.assert_not_called()
+    with client.application.app_context():
+        first = db.session.scalar(select(MPCheckout).where(MPCheckout.provider_subscription_id == 'mp-first'))
+        first.created_at = utc_now() - timedelta(minutes=31)
+        db.session.commit()
+    calls = []
+    def fake(method, path, payload=None, **kw):
+        calls.append((method, path, payload))
+        return {'id': 'mp-second', 'init_point': 'https://mp.example/2'} if method == 'POST' else {}
+    with patch(API, side_effect=fake):
+        assert client.post('/api/v1/billing/mercadopago/checkout', headers=headers, json=body).status_code == 201
+    assert calls[0] == ('PUT', '/preapproval/mp-first', {'status': 'cancelled'})
+    with client.application.app_context():
+        statuses = {c.provider_subscription_id: c.status for c in db.session.scalars(select(MPCheckout))}
+        assert statuses == {'mp-first': 'abandoned', 'mp-second': 'pending'}
+
+
+def test_authorized_checkout_never_expires(client):
+    from datetime import timedelta
+    from app.models.billing import utc_now
+    tenant, headers = _owner(client, 'v1-auth@example.test', 'v1-auth')
+    client.application.config.update(MP_ACCESS_TOKEN='t', MP_BACK_URL='https://example.test/billing/return')
+    with client.application.app_context():
+        price = _price()
+        _checkout(tenant, price, provider_id='mp-auth', status='authorized')
+        c = db.session.scalar(select(MPCheckout).where(MPCheckout.provider_subscription_id == 'mp-auth'))
+        c.created_at = utc_now() - timedelta(days=2)
+        db.session.commit()
+        price_id = price.id
+    with patch(API) as provider:
+        r = client.post('/api/v1/billing/mercadopago/checkout', headers=headers,
+                        json={'plan_price_id': price_id, 'payer_email': 'buyer@example.test'})
+        assert r.status_code == 409
+        provider.assert_not_called()
+
+
+def test_late_payment_on_abandoned_checkout_still_activates(client):
+    tenant, _ = _owner(client, 'v1-late@example.test', 'v1-late')
+    with client.application.app_context():
+        _checkout(tenant, _price(), provider_id='mp-sub-v1', status='abandoned')
+        with patch(API, return_value=_invoice('inv-late')):
+            assert reconcile_payment('inv-late') is True
+        assert db.session.query(TenantSubscription).one().status == 'active'

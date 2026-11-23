@@ -7,6 +7,9 @@
    el navegador envía solo `plan_price_id` y `payer_email`. El servidor toma el importe de MySQL, crea un
    `MPCheckout` con `external_reference` único y llama `POST /preapproval` (con `X-Idempotency-Key`).
    Devuelve `init_point`; el navegador redirige a Mercado Pago.
+   Si el comprador abandona el pago, el checkout pendiente caduca a los `MP_CHECKOUT_PENDING_TTL_MINUTES`
+   (30 por defecto): se intenta cancelar la preaprobación y se permite un nuevo intento. Un pago tardío sobre
+   el enlace viejo igualmente se concilia y activa la suscripción.
 3. **Retorno** (`/billing/return` en Angular): **no** activa nada. Consulta `GET /billing/subscription` y
    `GET /billing/mercadopago/checkout/latest` hasta que el servidor confirme.
 4. **Webhook** (`POST /api/v1/billing/mercadopago/webhook`):

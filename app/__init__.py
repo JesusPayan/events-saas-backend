@@ -181,6 +181,8 @@ def create_app(config_override=None):
     app.config['MP_ACCESS_TOKEN'] = os.getenv('MP_ACCESS_TOKEN', '')
     app.config['MP_WEBHOOK_SECRET'] = os.getenv('MP_WEBHOOK_SECRET', '')
     app.config['MP_BACK_URL'] = os.getenv('MP_BACK_URL', '')
+    # Minutos tras los cuales un checkout no autorizado deja de bloquear un nuevo intento.
+    app.config['MP_CHECKOUT_PENDING_TTL_MINUTES'] = int(os.getenv('MP_CHECKOUT_PENDING_TTL_MINUTES', '30'))
 
     # Operadores globales de la plataforma (IDs de usuario separados por coma).
     app.config['BILLING_OPERATOR_USER_IDS'] = _parse_id_list(
