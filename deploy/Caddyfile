@@ -1,0 +1,13 @@
+# Certificados TLS automáticos (Let's Encrypt) para {$DOMAIN}.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy frontend:8080
+	log {
+		output stdout
+		format json
+	}
+}

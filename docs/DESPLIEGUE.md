@@ -26,11 +26,17 @@ Opciones razonables (elige una):
 
 | Opción | Cómputo | MySQL | Comentario |
 |---|---|---|---|
-| A (recomendada para v1) | 1 VM (2 vCPU / 4 GB) con Docker Compose | MySQL administrado del mismo proveedor | Simple, barata, reproducible |
+| **A (elegida el 2026-11-23)** | 1 VM (2 vCPU / 4 GB) con Docker Compose | MySQL administrado del mismo proveedor | Simple, barata, reproducible. Implementada en `deploy/` |
 | B | Plataforma de contenedores administrada (App Platform, Cloud Run, ECS) | MySQL administrado | Menos operación, revisar volumen persistente para uploads (usar almacenamiento de objetos) |
 
 Requisitos indispensables en cualquier opción: dominio propio, TLS válido, MySQL con backups automáticos y
 retención ≥ 7 días, volumen o bucket persistente para `/data/uploads`, Redis para rate limiting.
+
+## Implementación de la opción A
+
+La configuración real y el manual paso a paso están en `deploy/README.md` (Caddy con TLS automático,
+scripts de despliegue, backup, prueba de restauración y tareas programadas). El ejemplo siguiente se
+conserva como referencia conceptual.
 
 ## Ejemplo docker-compose (opción A)
 
@@ -91,7 +97,9 @@ Guarda los secretos en el gestor de secretos del proveedor (o un archivo fuera d
 - CI existente (`.github/workflows/backend-ci.yml`): MySQL 8 + migraciones + pytest en push a `master`,
   `development`, `feature/**`, `fix/**` y PR a `master`/`development`.
 - Recomendado: proteger `master` y `development` (PR obligatorio + CI verde). Hoy **no** están protegidas.
-- Publicación: construir la imagen al crear un tag `vX.Y.Z`, desplegar primero a staging, luego a producción.
+- Publicación: el workflow `Release image` construye y publica la imagen en GHCR al crear un tag `vX.Y.Z`
+  (el backend solo publica si pasa la suite completa). Desplegar primero a staging y luego a producción con
+  `deploy/scripts/deploy.sh <tag>`.
 
 ## Staging vs producción
 

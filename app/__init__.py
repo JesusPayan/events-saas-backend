@@ -107,8 +107,8 @@ def create_app(config_override=None):
         app.wsgi_app = ProxyFix(
             app.wsgi_app,
             x_for=trusted_proxies,
-            x_proto=trusted_proxies,
-            x_host=trusted_proxies,
+            # El proxy más cercano reenvía el esquema original (un solo valor).
+            x_proto=1,
         )
     app.config["CHECK_DB_ON_STARTUP"] = (
         os.getenv("CHECK_DB_ON_STARTUP", "true").lower()

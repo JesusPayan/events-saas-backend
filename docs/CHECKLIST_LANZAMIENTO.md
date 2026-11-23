@@ -19,7 +19,8 @@ Marca cada punto con evidencia (fecha, responsable, enlace a log o captura).
       `BILLING_ENFORCE_ENTITLEMENTS=true`; si no existe, las empresas sin pago quedan bloqueadas.
 - [ ] Confirmar los límites del plan Gratuito (por defecto: 1 usuario, 25 clientes, 10 eventos, inventario,
       cotizaciones y contratos; sin reportes avanzados ni API).
-- [ ] Infraestructura aprobada y creada (dominio, TLS, MySQL administrado, Redis, almacenamiento persistente).
+- [x] Arquitectura elegida: opción A (servidor + Docker Compose + MySQL administrado), implementada y probada en local (`deploy/`).
+- [ ] Proveedor, dominio y presupuesto aprobados; recursos creados.
 - [ ] Backups automáticos activos y **una restauración probada** (`docs/OPERACION.md`).
 - [ ] Monitoreo de `/health` y `/ready` y alertas de 5xx configurados.
 - [ ] `BILLING_OPERATOR_USER_IDS` configurado con la cuenta del operador.
