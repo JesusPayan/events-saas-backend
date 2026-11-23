@@ -47,3 +47,6 @@ private_contracts/
 private_signatures/
 *.log
 /git
+
+# Plantillas de despliegue (los .env reales los ignora deploy/.gitignore)
+!deploy/env/
