@@ -207,3 +207,21 @@ def test_cross_tenant_role_rejected(client):
         db.session.refresh(member_a)
 
         assert member_a.role_id == original_role_id
+
+
+
+def test_me_and_members_include_names_scoped_to_membership(client):
+    from tests.test_identity import register as _register
+    a = _register(client, "names-a@example.test", "names-a")
+    b = _register(client, "names-b@example.test", "names-b")
+    assert a.status_code == b.status_code == 201
+    login = client.post("/api/v1/auth/login", json={"email": "names-a@example.test", "password": "a-very-long-password"})
+    headers = {"Authorization": "Bearer " + login.json["access_token"]}
+    me = client.get("/api/v1/auth/me", headers=headers).json
+    assert me["tenants"] == [a.json["tenant_id"]]
+    assert me["tenant_details"] == [{"id": a.json["tenant_id"], "name": me["tenant_details"][0]["name"],
+                                     "slug": "names-a", "role": "owner"}]
+    members = client.get("/api/v1/memberships", headers={**headers, "X-Tenant-ID": str(a.json["tenant_id"])}).json
+    assert [(m["email"], m["role_name"]) for m in members["items"]] == [("names-a@example.test", "owner")]
+    other = client.get("/api/v1/memberships", headers={**headers, "X-Tenant-ID": str(b.json["tenant_id"])})
+    assert other.status_code == 403

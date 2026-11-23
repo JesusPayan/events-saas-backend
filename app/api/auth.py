@@ -188,10 +188,31 @@ def me():
         )
     ).all()
 
+    tenants_by_id = {
+        t.id: t for t in db.session.scalars(
+            select(Tenant).where(Tenant.id.in_([m.tenant_id for m in memberships]))
+        ).all()
+    } if memberships else {}
+    roles_by_id = {
+        r.id: r for r in db.session.scalars(
+            select(Role).where(Role.id.in_([m.role_id for m in memberships]))
+        ).all()
+    } if memberships else {}
+
     return jsonify(
         id=g.user.id,
         email=g.user.email,
-        tenants=[m.tenant_id for m in memberships]
+        tenants=[m.tenant_id for m in memberships],
+        # Solo empresas de las que el usuario es miembro activo.
+        tenant_details=[
+            {
+                "id": m.tenant_id,
+                "name": tenants_by_id[m.tenant_id].name if m.tenant_id in tenants_by_id else None,
+                "slug": tenants_by_id[m.tenant_id].slug if m.tenant_id in tenants_by_id else None,
+                "role": roles_by_id[m.role_id].name if m.role_id in roles_by_id else None,
+            }
+            for m in memberships
+        ],
     ), 200
 
 
@@ -219,13 +240,26 @@ def members():
         )
     ).all()
 
+    users = {
+        u.id: u for u in db.session.scalars(
+            select(User).where(User.id.in_([m.user_id for m in memberships]))
+        ).all()
+    } if memberships else {}
+    roles = {
+        r.id: r for r in db.session.scalars(
+            select(Role).where(Role.tenant_id == g.tenant_id)
+        ).all()
+    }
+
     return jsonify(
         items=[
             {
                 "id": m.id,
                 "user_id": m.user_id,
                 "role_id": m.role_id,
-                "status": m.status
+                "status": m.status,
+                "email": users[m.user_id].email if m.user_id in users else None,
+                "role_name": roles[m.role_id].name if m.role_id in roles else None,
             }
             for m in memberships
         ]
