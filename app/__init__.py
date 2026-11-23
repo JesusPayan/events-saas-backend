@@ -37,7 +37,9 @@ from app.models.billing import (
 from app.api.billing import bp as billing_bp
 from app.api.billing_admin import bp as billing_admin_bp
 from app.models.mercadopago import MPCheckout, MPWebhookEvent, MPPayment, MPReconciliationIssue  # noqa: F401
+from app.models.identity import TenantInvitation  # noqa: F401
 from app.api.mercadopago import bp as mercadopago_bp
+from app.api.members import bp as members_bp
 _WEAK_SECRETS = {"", "dev-only-not-for-production", "replace-with-random-secret", "change-me"}
 
 
@@ -181,6 +183,7 @@ def create_app(config_override=None):
     app.config['MP_ACCESS_TOKEN'] = os.getenv('MP_ACCESS_TOKEN', '')
     app.config['MP_WEBHOOK_SECRET'] = os.getenv('MP_WEBHOOK_SECRET', '')
     app.config['MP_BACK_URL'] = os.getenv('MP_BACK_URL', '')
+    app.config['SESSION_MAX_AGE'] = int(os.getenv('SESSION_MAX_AGE', str(12 * 3600)))
     # Minutos tras los cuales un checkout no autorizado deja de bloquear un nuevo intento.
     app.config['MP_CHECKOUT_PENDING_TTL_MINUTES'] = int(os.getenv('MP_CHECKOUT_PENDING_TTL_MINUTES', '30'))
 
@@ -500,7 +503,8 @@ def create_app(config_override=None):
     company_receipts_bp,
       billing_bp,
       billing_admin_bp,
-      mercadopago_bp
+      mercadopago_bp,
+      members_bp
 ]
 
 

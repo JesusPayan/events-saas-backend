@@ -38,7 +38,7 @@ frontend `feature/billing_3.5` (0173d5d). Rama de trabajo local: `release/v1.0-h
 
 | Módulo | Estado | Notas |
 |---|---|---|
-| Autenticación / multiempresa | Completo con pendientes | Login, registro, tenant, permisos, aislamiento probado. Pendiente: **gestión de miembros** (solo listado; sin invitar/cambiar rol/quitar), refresco de sesión |
+| Autenticación / multiempresa | Completo | Login, registro, tenant, permisos, aislamiento; invitaciones con roles, cambio de rol y desactivación; sesión persistente y renovable (máx. 12 h); recuperación de contraseña (AUTH-02) |
 | Clientes | Completo | Listado, búsqueda, filtros, paginación, alta, edición, detalle, desactivación |
 | Eventos | Completo | CRUD, estados, calendario, cliente asociado |
 | Inventario | Completo | Categorías, artículos, disponibilidad, reservas idempotentes, movimientos, incidencias, cargos, reportes |
