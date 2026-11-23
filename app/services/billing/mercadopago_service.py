@@ -99,7 +99,9 @@ def create_checkout(tenant_id, price_id, payer_email):
             'reason': f'Eventos SaaS - {plan.name}',
             'external_reference': reference,
             'payer_email': payer_email,
-            'auto_recurring': {'frequency': 1, 'frequency_type': 'months' if price.billing_interval == 'month' else 'years',
+            # La API de preaprobación solo admite frequency_type 'days' o 'months':
+            # el plan anual se expresa como 12 meses.
+            'auto_recurring': {'frequency': 1 if price.billing_interval == 'month' else 12, 'frequency_type': 'months',
                                'transaction_amount': float(price.amount), 'currency_id': 'MXN'},
             'back_url': current_app.config['MP_BACK_URL'],
             'status': 'pending',

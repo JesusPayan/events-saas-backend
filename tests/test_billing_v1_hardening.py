@@ -470,3 +470,30 @@ def test_canceled_subscription_keeps_access_until_period_end(client):
         assert during['allowed'] is True and during['tier'] == 'paid' and during['limit'] == 100
         after = entitlement(tenant, 'clients', at=sub.current_period_end + timedelta(seconds=1))
         assert after['allowed'] is False and after['reason'] == 'subscription_inactive'
+
+
+
+def test_preapproval_frequency_by_interval(client):
+    tenant, headers = _owner(client, 'v1-freq@example.test', 'v1-freq')
+    client.application.config.update(MP_ACCESS_TOKEN='t', MP_BACK_URL='https://example.test/billing/return')
+    with client.application.app_context():
+        annual_id = _price('2511.60', interval='year', code='v1-annual').id
+    with patch(API, return_value={'id': 'mp-annual', 'init_point': 'https://mp.example/a'}) as provider:
+        r = client.post('/api/v1/billing/mercadopago/checkout', headers=headers,
+                        json={'plan_price_id': annual_id, 'payer_email': 'buyer@example.test'})
+    assert r.status_code == 201, r.json
+    recurring = provider.call_args.args[2]['auto_recurring']
+    assert recurring['frequency_type'] == 'months' and recurring['frequency'] == 12
+    assert recurring['transaction_amount'] == 2511.6
+
+
+def test_provider_error_detail_is_sanitized():
+    import io
+    import urllib.error
+    from app.services.billing.mercadopago_client import _safe_error_detail
+    body = (b'{"message":"Invalid payer_email buyer@example.com","status":400,'
+            b'"cause":[{"code":"123","description":"token APP_USR-1234567890abcdefghijklmnopqrstuvwxyz"}]}')
+    exc = urllib.error.HTTPError('https://api.mercadopago.com/preapproval', 400, 'Bad Request', {}, io.BytesIO(body))
+    detail = _safe_error_detail(exc)
+    assert 'Invalid payer_email' in detail and 'cause=123' in detail
+    assert 'buyer@example.com' not in detail and 'abcdefghijklmnop' not in detail
