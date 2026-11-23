@@ -11,10 +11,14 @@ from app.services.billing.mercadopago_client import api, MPError
 from app.services.billing.mercadopago_service import reconcile_payment
 
 
-def discover_invoices(*, apply=False, limit=100, page_size=20, max_pages=20):
-    if any(isinstance(v, bool) or not isinstance(v, int) for v in (limit, page_size, max_pages)):
+def discover_invoices(*, apply=False, limit=100, page_size=None, max_pages=20):
+    """``page_size=None`` deja que Mercado Pago use su tamaño de página por defecto
+    (la API rechaza algunos valores de ``limit`` con 400 'Invalid value for limit')."""
+    if any(isinstance(v, bool) or not isinstance(v, int) for v in (limit, max_pages)):
         raise ValueError('invalid_limits')
-    if not (1 <= limit <= 1000 and 1 <= page_size <= 100 and 1 <= max_pages <= 100):
+    if page_size is not None and (isinstance(page_size, bool) or not isinstance(page_size, int) or not 1 <= page_size <= 100):
+        raise ValueError('invalid_limits')
+    if not (1 <= limit <= 1000 and 1 <= max_pages <= 100):
         raise ValueError('invalid_limits')
     checkouts = db.session.scalars(select(MPCheckout).where(
         MPCheckout.provider_subscription_id.is_not(None),
@@ -29,10 +33,14 @@ def discover_invoices(*, apply=False, limit=100, page_size=20, max_pages=20):
     for provider_id in ids:
         report['subscriptions'] += 1
         complete = False
+        offset = 0
         for page in range(max_pages):
-            path = '/authorized_payments/search?' + urlencode({
-                'preapproval_id': provider_id, 'limit': page_size, 'offset': page * page_size,
-            })
+            params = {'preapproval_id': provider_id}
+            if page_size is not None:
+                params['limit'] = page_size
+            if offset:
+                params['offset'] = offset
+            path = '/authorized_payments/search?' + urlencode(params)
             try:
                 payload = api('GET', path)
             except MPError:
@@ -78,7 +86,10 @@ def discover_invoices(*, apply=False, limit=100, page_size=20, max_pages=20):
                         db.session.rollback()
             paging = payload.get('paging') or {}
             total = paging.get('total') if isinstance(paging, dict) else None
-            if not items or len(items) < page_size or (isinstance(total, int) and (page + 1) * page_size >= total):
+            offset += len(items)
+            if (not items or (isinstance(total, int) and offset >= total)
+                    or (page_size is not None and len(items) < page_size)
+                    or (total is None and page_size is None)):
                 complete = True
                 break
         if not complete:
