@@ -10,7 +10,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from app.extensions import db, limiter
 from app.models import Tenant
 from app.models.identity import User, Role, Permission, RolePermission, Membership
-from app.security import authenticate, tenant_permission, issue_token
+from app.security import authenticate, tenant_permission, issue_token, session_version
+from app.services.members_service import OWNER_PERMISSIONS
+from app.services.email_service import EmailDeliveryError, send_email
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 
 bp = Blueprint("auth", __name__)
@@ -18,18 +21,8 @@ bp = Blueprint("auth", __name__)
 _EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 _SLUG_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?")
 
-# Permisos del rol propietario creado al registrar una empresa.
-OWNER_PERMISSION_CODES = (
-    "tenant.read",
-    "members.read",
-    "billing.manage",
-    "clients.read", "clients.create", "clients.update",
-    "events.read", "events.create", "events.update",
-    "inventory.read", "inventory.create", "inventory.update", "inventory.adjust",
-    "inventory.charges.approve", "inventory.charges.pay",
-    "quotes.create", "quotes.read",
-    "contracts.create", "contracts.read", "contracts.update",
-)
+# Permisos del rol propietario: fuente única en members_service.
+OWNER_PERMISSION_CODES = OWNER_PERMISSIONS
 
 
 @bp.post("/auth/register")
@@ -172,10 +165,72 @@ def login():
         return jsonify(error="invalid_credentials"), 401
 
     return jsonify(
-        access_token=issue_token(user.id),
+        access_token=issue_token(user.id, user=user),
         token_type="Bearer",
-        expires_in=3600
+        expires_in=current_app.config.get("TOKEN_MAX_AGE", 3600)
     ), 200
+
+
+@bp.post("/auth/refresh")
+@authenticate
+def refresh():
+    """Renueva el token sin extender la duración máxima de la sesión original."""
+    return jsonify(
+        access_token=issue_token(g.user.id, user=g.user, session_started=g.session_started),
+        token_type="Bearer",
+        expires_in=current_app.config.get("TOKEN_MAX_AGE", 3600)
+    ), 200
+
+
+def _reset_serializer():
+    return URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="eventos-password-reset-v1")
+
+
+@bp.post("/auth/password/forgot")
+@limiter.limit(lambda: current_app.config.get("RATELIMIT_PASSWORD_RESET", "5 per hour"))
+def forgot_password():
+    """Envía un enlace de restablecimiento. Responde igual exista o no el correo."""
+    data = request.get_json(silent=True)
+    email = str((data or {}).get("email", "")).strip().lower() if isinstance(data, dict) else ""
+    user = db.session.scalar(select(User).where(User.email == email)) if email else None
+    if user is not None and user.is_active:
+        token = _reset_serializer().dumps({"uid": user.id, "sv": session_version(user)})
+        base = current_app.config.get("FRONTEND_PUBLIC_URL", "").rstrip("/")
+        try:
+            send_email(
+                to_email=user.email,
+                subject="Restablece tu contraseña de Eventos SaaS",
+                text_body=(
+                    "Recibimos una solicitud para restablecer tu contraseña.\n\n"
+                    f"Usa este enlace en la próxima hora:\n{base}/reset-password#token={token}\n\n"
+                    "Si no lo solicitaste, ignora este correo: tu contraseña no cambiará."
+                ),
+            )
+        except EmailDeliveryError:
+            current_app.logger.warning("No se pudo enviar el correo de restablecimiento: user_id=%s", user.id)
+    return jsonify(accepted=True), 202
+
+
+@bp.post("/auth/password/reset")
+@limiter.limit(lambda: current_app.config.get("RATELIMIT_PASSWORD_RESET", "10 per hour"))
+def reset_password():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(error="invalid_json"), 400
+    token, password = data.get("token"), data.get("password")
+    if not isinstance(password, str) or not 12 <= len(password) <= 256:
+        return jsonify(error="invalid_password"), 422
+    try:
+        payload = _reset_serializer().loads(str(token or ""), max_age=current_app.config.get("PASSWORD_RESET_MAX_AGE", 3600))
+    except (BadSignature, SignatureExpired):
+        return jsonify(error="invalid_or_expired_token"), 400
+    user = db.session.get(User, payload.get("uid")) if isinstance(payload, dict) else None
+    # Un solo uso: tras cambiar la contraseña, 'sv' deja de coincidir.
+    if user is None or not user.is_active or payload.get("sv") != session_version(user):
+        return jsonify(error="invalid_or_expired_token"), 400
+    user.password_hash = generate_password_hash(password)
+    db.session.commit()  # invalida también todas las sesiones abiertas
+    return jsonify(reset=True), 200
 
 
 @bp.get("/auth/me")
