@@ -63,6 +63,10 @@ def _validate_production_config(app):
         problems.append("MP_ACCESS_TOKEN es obligatorio")
     if len(app.config.get("MP_WEBHOOK_SECRET") or "") < 16:
         problems.append("MP_WEBHOOK_SECRET es obligatorio")
+    db_uri = str(app.config.get("SQLALCHEMY_DATABASE_URI") or "")
+    if not app.config.get("DB_TLS_CONFIGURED") and "ssl" not in db_uri.lower() and \
+            os.getenv("DB_ALLOW_PLAINTEXT", "false").lower() not in ("true", "1"):
+        problems.append("la conexión a MySQL debe usar TLS (define DB_SSL_CA con el CA del proveedor)")
     if not (app.config.get("MP_BACK_URL") or "").startswith("https://"):
         problems.append("MP_BACK_URL debe ser https://")
     origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
@@ -75,6 +79,28 @@ def _validate_production_config(app):
         problems.append("RATELIMIT_STORAGE_URI debe apuntar a un almacenamiento compartido (p. ej. redis://)")
     if problems:
         raise RuntimeError("Configuración de producción inválida: " + "; ".join(problems))
+
+
+def _configure_db_tls(app):
+    """TLS hacia MySQL administrado verificando el CA del proveedor (DB_SSL_CA).
+
+    Python 3.13 activa VERIFY_X509_STRICT, que rechaza algunos certificados de bases
+    administradas (p. ej. sin Authority Key Identifier). Se conserva la verificación de
+    la cadena contra el CA indicado; solo se omiten esas comprobaciones adicionales.
+    """
+    ca_file = os.getenv("DB_SSL_CA", "").strip()
+    if not ca_file:
+        return
+    import ssl
+    context = ssl.create_default_context(cafile=ca_file)
+    context.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
+    context.check_hostname = os.getenv("DB_SSL_VERIFY_HOSTNAME", "true").lower() in ("true", "1", "yes")
+    options = dict(app.config.get("SQLALCHEMY_ENGINE_OPTIONS") or {})
+    connect_args = dict(options.get("connect_args") or {})
+    connect_args["ssl"] = context
+    options["connect_args"] = connect_args
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = options
+    app.config["DB_TLS_CONFIGURED"] = True
 
 
 def create_app(config_override=None):
@@ -163,6 +189,7 @@ def create_app(config_override=None):
     )
 
     app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+    _configure_db_tls(app)
 
     app.config[
         "SQLALCHEMY_TRACK_MODIFICATIONS"
