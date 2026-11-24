@@ -50,3 +50,8 @@ private_signatures/
 
 # Plantillas de despliegue (los .env reales los ignora deploy/.gitignore)
 !deploy/env/
+
+# Archivos de entorno con cualquier nombre (no versionar)
+*.env
+!.env.example
+!deploy/env/*.env.example
