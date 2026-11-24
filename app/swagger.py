@@ -1,3 +1,4 @@
+from app.branding import PRODUCT_NAME
 
 from pathlib import Path
 
@@ -28,7 +29,7 @@ def init_swagger(app):
         "/api/docs",
         "/api/openapi.json",
         config={
-            "app_name": "Eventos SaaS API",
+            "app_name": f"{PRODUCT_NAME} API",
             "docExpansion": "list",
             "deepLinking": True
         }

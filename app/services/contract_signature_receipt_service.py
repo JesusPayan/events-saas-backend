@@ -1,4 +1,5 @@
 """COM-02.1.7: comprobante PDF de firma, sin alterar el contrato original."""
+from app.branding import BRAND_NAME
 import hashlib
 import io
 from datetime import timezone
@@ -101,7 +102,7 @@ def generate_signature_receipt(*, tenant_id, request_id):
                               textColor=colors.HexColor('#17243B'), spaceBefore=12, spaceAfter=7))
     p = lambda v: Paragraph(escape(str(v or '')), styles['ReceiptBodyX'])
     story = [Paragraph('COMPROBANTE DE FIRMA ELECTRÓNICA', styles['ReceiptTitleX']),
-             p('Eventos SaaS · Evidencia técnica de aceptación y firma'),
+             p(f'Evidencia técnica de aceptación y firma · Generado con {BRAND_NAME}'),
              Paragraph('Identificación', styles['ReceiptHeadingX'])]
     rows = [
         ('Contrato', f'#{invitation.contract_id}'),
@@ -143,7 +144,7 @@ def generate_signature_receipt(*, tenant_id, request_id):
         canvas.saveState()
         canvas.setFont('Helvetica', 8)
         canvas.setFillColor(colors.HexColor('#566174'))
-        canvas.drawString(20*mm, 12*mm, 'Eventos SaaS · Comprobante de firma')
+        canvas.drawString(20*mm, 12*mm, f'Comprobante de firma · Generado con {BRAND_NAME}')
         canvas.drawRightString(190*mm, 12*mm, f'Página {_doc.page}')
         canvas.restoreState()
     doc.build(story, onFirstPage=footer, onLaterPages=footer)

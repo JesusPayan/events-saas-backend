@@ -4,6 +4,7 @@ import logging
 from flask import Blueprint, current_app, g, jsonify, request
 from sqlalchemy import select
 
+from app.branding import EMAIL_SIGNATURE, PRODUCT_NAME
 from app.extensions import db, limiter
 from app.models import Tenant
 from app.models.identity import TenantInvitation
@@ -56,12 +57,13 @@ def invite():
     try:
         send_email(
             to_email=inv.email,
-            subject=f"Te invitaron a {tenant.name} en Eventos SaaS",
+            subject=f"Te invitaron a {tenant.name} en {PRODUCT_NAME}",
             text_body=(
-                f"Hola,\n\n{g.user.email} te invitó a unirte a {tenant.name} en Eventos SaaS "
+                f"Hola,\n\n{g.user.email} te invitó a unirte a {tenant.name} en {PRODUCT_NAME} "
                 f"con el rol {ROLE_NAMES.get(inv.role_key, inv.role_key)}.\n\n"
                 f"Acepta la invitación aquí (vence el {inv.expires_at:%d/%m/%Y}):\n{url}\n\n"
-                "Si no esperabas este correo, puedes ignorarlo."
+                "Si no esperabas este correo, puedes ignorarlo.\n\n"
+                f"{EMAIL_SIGNATURE}"
             ),
         )
     except EmailDeliveryError:

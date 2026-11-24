@@ -1,4 +1,5 @@
 """Read-only, deterministic commercial payment receipts (not CFDI)."""
+from app.branding import BRAND_NAME
 from io import BytesIO
 from decimal import Decimal
 from xml.sax.saxutils import escape
@@ -64,7 +65,7 @@ def generate_receipt_pdf(contract, payment, tenant, client) -> bytes:
                             rightMargin=19 * mm, leftMargin=19 * mm,
                             topMargin=19 * mm, bottomMargin=19 * mm,
                             title=f'Comprobante {receipt_number(payment.id)}',
-                            author='Eventos SaaS')
+                            author=BRAND_NAME)
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name='ReceiptTitle', parent=styles['Heading1'],
                               fontName='Helvetica-Bold', fontSize=18, leading=22,
@@ -116,6 +117,6 @@ def generate_receipt_pdf(contract, payment, tenant, client) -> bytes:
                                ('BOTTOMPADDING', (0, 0), (-1, -1), 9)]))
     story.extend([table, Spacer(1, 14 * mm),
                   p('Recibo comercial de pago. Este documento no es un CFDI ni sustituye una factura fiscal.', 'ReceiptFoot'),
-                  Spacer(1, 3 * mm), p('Emitido por Eventos SaaS con base en un pago confirmado.', 'ReceiptFoot')])
+                  Spacer(1, 3 * mm), p(f'Emitido con {BRAND_NAME} con base en un pago confirmado.', 'ReceiptFoot')])
     doc.build(story)
     return stream.getvalue()

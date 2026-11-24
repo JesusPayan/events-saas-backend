@@ -10,6 +10,7 @@ from urllib.parse import quote
 from flask import current_app
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from app.branding import PRODUCT_NAME
 from app.extensions import db
 from app.models.billing import BillingPlanPrice, BillingPlan, TenantSubscription, SubscriptionAudit, utc_now
 from app.models.mercadopago import MPCheckout, MPWebhookEvent, MPPayment
@@ -126,7 +127,7 @@ def create_checkout(tenant_id, price_id, payer_email):
     db.session.commit()
     try:
         result = api('POST', '/preapproval', {
-            'reason': f'Eventos SaaS - {plan.name}',
+            'reason': f'{PRODUCT_NAME} - {plan.name}',
             'external_reference': reference,
             'payer_email': payer_email,
             # La API de preaprobación solo admite frequency_type 'days' o 'months':

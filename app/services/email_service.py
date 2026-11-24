@@ -1,5 +1,6 @@
 
-"""Reusable SMTP email delivery for Eventos SaaS."""
+"""Reusable SMTP email delivery for the EasiAcc platform."""
+from app.branding import BRAND_NAME
 
 import logging
 import os
@@ -20,7 +21,7 @@ def send_email(*, to_email: str, subject: str, text_body: str) -> None:
     username = os.environ.get("SMTP_USERNAME", "").strip()
     password = os.environ.get("SMTP_PASSWORD", "")
     sender = os.environ.get("SMTP_FROM_EMAIL", "").strip()
-    sender_name = os.environ.get("SMTP_FROM_NAME", "Eventos SaaS")
+    sender_name = os.environ.get("SMTP_FROM_NAME", BRAND_NAME)
     mode = os.environ.get("SMTP_SECURITY", "starttls").strip().lower()
 
     if mode not in ("none", "starttls", "ssl"):
@@ -99,9 +100,10 @@ def send_signature_otp(to_email: str, code: str) -> None:
         to_email=to_email,
         subject="Código de verificación para firmar tu contrato",
         text_body=(
-            "Recibimos una solicitud para firmar un contrato en Eventos SaaS.\n\n"
+            "Recibimos una solicitud para firmar electrónicamente un contrato.\n\n"
             f"Tu código de verificación es: {code}\n\n"
             "Este código vence en 5 minutos. No lo compartas.\n"
-            "Si no solicitaste esta verificación, ignora este mensaje."
+            "Si no solicitaste esta verificación, ignora este mensaje.\n\n"
+            f"Firma electrónica por {BRAND_NAME}"
         ),
     )
