@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Despliega RELEASE_TAG (env/stack.env): backup -> pull -> migraciones -> arranque -> verificación.
 # Uso:  scripts/deploy.sh            (usa RELEASE_TAG de env/stack.env)
-#       scripts/deploy.sh v1.0.1     (actualiza RELEASE_TAG y despliega)
+#       scripts/deploy.sh v1.1.0     (actualiza RELEASE_TAG y despliega)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [ -n "${1:-}" ]; then

@@ -37,7 +37,7 @@ Leyenda: **D** desarrollada · **V** validada con pruebas automatizadas y/o nave
 | Suscripciones con Mercado Pago | D · V · **S** | Cobro real en sandbox verificado (2026-11-22). **Webhook pendiente de validar** con URL fija |
 | Plan Gratuito y límites por plan | D · V | Activar `BILLING_ENFORCE_ENTITLEMENTS=true` tras sembrar el catálogo |
 | Panel global (precios, suscripciones, conciliación) | D · V | |
-| Landing comercial `easiacc.com` | D · V | Falta correo de contacto y textos legales finales |
+| Landing comercial `easiacc.com` | D · V | Contacto `contacto@easiacc.com` (crear el buzón); faltan textos legales finales |
 | Despliegue opción A (Linode) | D · V (local) | **P pendiente**: no hay recursos creados |
 
 ## 3. Registro de riesgos
@@ -61,12 +61,13 @@ Leyenda: **D** desarrollada · **V** validada con pruebas automatizadas y/o nave
 4. Aviso de privacidad y términos aprobados por un abogado.
 5. Backups activos y una restauración probada.
 6. Monitoreo externo de `/api/v1/health` y `/api/v1/ready`.
-7. Fusionar `development` en `master` y crear el tag `v1.1.0` (el entorno de desarrollo asistido no puede crear tags).
+
+Pasos detallados de cada bloqueador: `docs/PUESTA_EN_MARCHA.md`. `master` y el tag `v1.1.0` ya están publicados
+(2026-11-24) y las imágenes se generaron en GHCR.
 
 ## 5. Pendientes no bloqueantes (siguiente iteración)
 
 - Edición de cotizaciones existentes.
 - Devolución como estado propio de las órdenes logísticas.
-- Correo de contacto comercial en `BRAND.contactEmail` (activa «Solicitar una demostración»).
 - Refinar el logotipo con un diseñador antes de imprimir material o registrarlo.
 - Diferencia cosmética de nombres de índices entre modelos y migraciones (`flask db check`).
