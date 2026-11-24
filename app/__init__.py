@@ -40,6 +40,7 @@ from app.models.mercadopago import MPCheckout, MPWebhookEvent, MPPayment, MPReco
 from app.models.identity import TenantInvitation  # noqa: F401
 from app.api.mercadopago import bp as mercadopago_bp
 from app.api.members import bp as members_bp
+from app.api.public import bp as public_bp
 _WEAK_SECRETS = {"", "dev-only-not-for-production", "replace-with-random-secret", "change-me"}
 
 
@@ -531,7 +532,8 @@ def create_app(config_override=None):
       billing_bp,
       billing_admin_bp,
       mercadopago_bp,
-      members_bp
+      members_bp,
+      public_bp
 ]
 
 
