@@ -1,6 +1,6 @@
 # Manual del operador global
 
-El panel global administra la parte comercial de Eventos SaaS. **No es un rol de empresa**: el acceso se
+El panel global administra la parte comercial de EasiAcc Events. **No es un rol de empresa**: el acceso se
 concede solo a los IDs de usuario listados en `BILLING_OPERATOR_USER_IDS` del backend. Si la variable está
 vacía, el panel queda bloqueado para todos.
 

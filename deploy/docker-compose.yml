@@ -1,4 +1,4 @@
-# Eventos SaaS — Opción A: un servidor con Docker Compose + MySQL administrado.
+# EasiAcc Events — Opción A: un servidor con Docker Compose + MySQL administrado.
 # Uso:  docker compose --env-file env/stack.env up -d
 # Entorno de staging: misma definición con otro env/stack.env (otro dominio, BD y credenciales MP de prueba).
 name: ${STACK_NAME:-eventos}
