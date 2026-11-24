@@ -3,6 +3,7 @@ import hashlib
 from datetime import datetime, timezone
 from io import BytesIO
 
+from app.branding import tenant_display_name
 from flask import Blueprint, jsonify, send_file
 from sqlalchemy import select
 
@@ -58,6 +59,8 @@ def invitation_details(token):
         signer_role=invitation.signer_role,
         status=invitation.status,
         expires_at=invitation.expires_at.isoformat() + 'Z',
+        # Empresa que envía el contrato (identidad del tenant, no de la plataforma).
+        company_name=tenant_display_name(invitation.tenant_id) or None,
     )
     response.headers['Cache-Control'] = 'no-store'
     response.headers['Referrer-Policy'] = 'no-referrer'

@@ -12,6 +12,7 @@ from app.models import Tenant
 from app.models.identity import User, Role, Permission, RolePermission, Membership
 from app.security import authenticate, tenant_permission, issue_token, session_version
 from app.services.members_service import OWNER_PERMISSIONS
+from app.branding import BRAND_NAME, EMAIL_SIGNATURE
 from app.services.email_service import EmailDeliveryError, send_email
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
@@ -199,11 +200,12 @@ def forgot_password():
         try:
             send_email(
                 to_email=user.email,
-                subject="Restablece tu contraseña de Eventos SaaS",
+                subject=f"Restablece tu contraseña de {BRAND_NAME}",
                 text_body=(
                     "Recibimos una solicitud para restablecer tu contraseña.\n\n"
                     f"Usa este enlace en la próxima hora:\n{base}/reset-password#token={token}\n\n"
-                    "Si no lo solicitaste, ignora este correo: tu contraseña no cambiará."
+                    "Si no lo solicitaste, ignora este correo: tu contraseña no cambiará.\n\n"
+                    f"{EMAIL_SIGNATURE}"
                 ),
             )
         except EmailDeliveryError:

@@ -1,4 +1,6 @@
-# Eventos SaaS — Backend (Flask)
+# EasiAcc Events — Backend (Flask)
+
+> **EasiAcc** — *Simplifica tu negocio.* Identidad de marca centralizada en `app/branding.py`.
 
 API REST multiempresa (multi-tenant) para gestión de eventos: clientes, eventos, inventario, logística,
 cotizaciones, contratos con firma electrónica, pagos/comprobantes y suscripciones con Mercado Pago.

@@ -5,6 +5,7 @@ import ssl
 from email.message import EmailMessage
 from email.utils import formataddr
 
+from app.branding import BRAND_NAME, tenant_display_name
 from app.services.contract_signature_receipt_service import get_receipt_data, generate_signature_receipt
 
 
@@ -19,7 +20,7 @@ def send_signature_receipt(*, tenant_id, request_id):
     username = os.environ.get('SMTP_USERNAME', '').strip()
     password = os.environ.get('SMTP_PASSWORD', '').replace(' ', '')
     sender = os.environ.get('SMTP_FROM_EMAIL', username).strip()
-    sender_name = os.environ.get('SMTP_FROM_NAME', 'Eventos SaaS')
+    sender_name = os.environ.get('SMTP_FROM_NAME', BRAND_NAME)
     if not username or not password or not sender:
         raise RuntimeError('Credenciales SMTP no configuradas')
     msg = EmailMessage()
@@ -30,7 +31,8 @@ def send_signature_receipt(*, tenant_id, request_id):
         f'Hola {signature.signer_name},\n\n'
         f'Tu firma del contrato #{invitation.contract_id} quedó registrada. '
         'Adjuntamos el comprobante PDF de evidencia.\n\n'
-        'Conserva este correo y el comprobante.\n\nEventos SaaS'
+        'Conserva este correo y el comprobante.\n\n'
+        f'{tenant_display_name(tenant_id)}\nEnviado mediante {BRAND_NAME}'
     )
     msg.add_attachment(pdf, maintype='application', subtype='pdf',
                        filename=f'comprobante-firma-contrato-{invitation.contract_id}-solicitud-{request_id}.pdf')

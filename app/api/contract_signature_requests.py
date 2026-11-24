@@ -2,6 +2,7 @@
 from flask import Blueprint, jsonify, request, g, current_app
 from urllib.parse import quote
 
+from app.branding import BRAND_NAME, tenant_display_name
 from app.security import tenant_permission
 from app.extensions import db
 
@@ -55,12 +56,13 @@ def create_invitation(contract_id):
                 subject="Invitación para firmar contrato",
                 text_body=(
                     f"Hola {invitation.signer_name},\n\n"
-                    "Has recibido una invitación para "
+                    f"{tenant_display_name(g.tenant_id) or 'Tu proveedor'} te envió una invitación para "
                     "firmar electrónicamente un contrato.\n\n"
                     f"Accede aquí:\n{signing_url}\n\n"
                     "Este enlace es personal y confidencial. "
                     "No lo compartas.\n\n"
-                    "Eventos SaaS"
+                    f"{tenant_display_name(g.tenant_id)}\n"
+                    f"Enviado mediante {BRAND_NAME}"
                 ),
             )
 
