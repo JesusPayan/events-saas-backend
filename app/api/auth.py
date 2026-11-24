@@ -1,4 +1,5 @@
 
+import re
 from datetime import datetime
 
 from flask import Blueprint, request, jsonify, g, current_app
@@ -6,16 +7,27 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.models import Tenant
 from app.models.identity import User, Role, Permission, RolePermission, Membership
-from app.security import authenticate, tenant_permission, issue_token
+from app.security import authenticate, tenant_permission, issue_token, session_version
+from app.services.members_service import OWNER_PERMISSIONS
+from app.branding import BRAND_NAME, EMAIL_SIGNATURE
+from app.services.email_service import EmailDeliveryError, send_email
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 
 bp = Blueprint("auth", __name__)
 
+_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+_SLUG_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?")
+
+# Permisos del rol propietario: fuente única en members_service.
+OWNER_PERMISSION_CODES = OWNER_PERMISSIONS
+
 
 @bp.post("/auth/register")
+@limiter.limit(lambda: current_app.config.get("RATELIMIT_REGISTER", "10 per hour"))
 def register():
     data = request.get_json(silent=True)
 
@@ -41,7 +53,12 @@ def register():
         not email
         or not slug
         or len(name) < 3
+        or len(name) > 180
         or len(password) < 12
+        or len(password) > 256
+        or len(email) > 254
+        or not _EMAIL_RE.fullmatch(email)
+        or not _SLUG_RE.fullmatch(slug)
     ):
         return jsonify(error="invalid_registration"), 400
 
@@ -74,58 +91,7 @@ def register():
         db.session.flush()
 
         # 4. Asignar permisos iniciales
-        permission_codes = (
-            # Empresa
-            "tenant.read",
-
-            # Miembros
-            "members.read",
-
-            # Clientes
-            "clients.read",
-            "clients.create",
-            "clients.update",
-
-            # Eventos
-            "events.read",
-            "events.create",
-            "events.update",
-
-            # Inventario
-            "inventory.read",
-            "inventory.create",
-            "inventory.update",
-            "inventory.adjust",
-
-            # Cargos
-            "inventory.charges.approve",
-            "inventory.charges.pay",
-            # Eventos
-            "events.read",
-            "events.create",
-            "events.update",
-
-            # Cotizaciones
-            "quotes.create",
-            "quotes.read",
-
-            # Contratos
-            "contracts.create",
-            "contracts.read",
-            "contracts.update",
-
-            # Inventario
-            "inventory.read",
-            "inventory.create",
-            "inventory.update",
-            "inventory.adjust",
-        )
-
-        for code in dict.fromkeys(permission_codes):
-            if len(permission_codes) != len(set(permission_codes)):
-                current_app.logger.warning(
-                    "Se detectaron permisos duplicados en el registro"
-                )
+        for code in OWNER_PERMISSION_CODES:
             permission = db.session.scalar(
                 select(Permission).where(
                     Permission.code == code
@@ -176,6 +142,7 @@ def register():
 
 
 @bp.post("/auth/login")
+@limiter.limit(lambda: current_app.config.get("RATELIMIT_LOGIN", "10 per minute"))
 def login():
     data = request.get_json(silent=True)
 
@@ -199,10 +166,73 @@ def login():
         return jsonify(error="invalid_credentials"), 401
 
     return jsonify(
-        access_token=issue_token(user.id),
+        access_token=issue_token(user.id, user=user),
         token_type="Bearer",
-        expires_in=3600
+        expires_in=current_app.config.get("TOKEN_MAX_AGE", 3600)
     ), 200
+
+
+@bp.post("/auth/refresh")
+@authenticate
+def refresh():
+    """Renueva el token sin extender la duración máxima de la sesión original."""
+    return jsonify(
+        access_token=issue_token(g.user.id, user=g.user, session_started=g.session_started),
+        token_type="Bearer",
+        expires_in=current_app.config.get("TOKEN_MAX_AGE", 3600)
+    ), 200
+
+
+def _reset_serializer():
+    return URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="eventos-password-reset-v1")
+
+
+@bp.post("/auth/password/forgot")
+@limiter.limit(lambda: current_app.config.get("RATELIMIT_PASSWORD_RESET", "5 per hour"))
+def forgot_password():
+    """Envía un enlace de restablecimiento. Responde igual exista o no el correo."""
+    data = request.get_json(silent=True)
+    email = str((data or {}).get("email", "")).strip().lower() if isinstance(data, dict) else ""
+    user = db.session.scalar(select(User).where(User.email == email)) if email else None
+    if user is not None and user.is_active:
+        token = _reset_serializer().dumps({"uid": user.id, "sv": session_version(user)})
+        base = current_app.config.get("FRONTEND_PUBLIC_URL", "").rstrip("/")
+        try:
+            send_email(
+                to_email=user.email,
+                subject=f"Restablece tu contraseña de {BRAND_NAME}",
+                text_body=(
+                    "Recibimos una solicitud para restablecer tu contraseña.\n\n"
+                    f"Usa este enlace en la próxima hora:\n{base}/reset-password#token={token}\n\n"
+                    "Si no lo solicitaste, ignora este correo: tu contraseña no cambiará.\n\n"
+                    f"{EMAIL_SIGNATURE}"
+                ),
+            )
+        except EmailDeliveryError:
+            current_app.logger.warning("No se pudo enviar el correo de restablecimiento: user_id=%s", user.id)
+    return jsonify(accepted=True), 202
+
+
+@bp.post("/auth/password/reset")
+@limiter.limit(lambda: current_app.config.get("RATELIMIT_PASSWORD_RESET", "10 per hour"))
+def reset_password():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(error="invalid_json"), 400
+    token, password = data.get("token"), data.get("password")
+    if not isinstance(password, str) or not 12 <= len(password) <= 256:
+        return jsonify(error="invalid_password"), 422
+    try:
+        payload = _reset_serializer().loads(str(token or ""), max_age=current_app.config.get("PASSWORD_RESET_MAX_AGE", 3600))
+    except (BadSignature, SignatureExpired):
+        return jsonify(error="invalid_or_expired_token"), 400
+    user = db.session.get(User, payload.get("uid")) if isinstance(payload, dict) else None
+    # Un solo uso: tras cambiar la contraseña, 'sv' deja de coincidir.
+    if user is None or not user.is_active or payload.get("sv") != session_version(user):
+        return jsonify(error="invalid_or_expired_token"), 400
+    user.password_hash = generate_password_hash(password)
+    db.session.commit()  # invalida también todas las sesiones abiertas
+    return jsonify(reset=True), 200
 
 
 @bp.get("/auth/me")
@@ -215,10 +245,31 @@ def me():
         )
     ).all()
 
+    tenants_by_id = {
+        t.id: t for t in db.session.scalars(
+            select(Tenant).where(Tenant.id.in_([m.tenant_id for m in memberships]))
+        ).all()
+    } if memberships else {}
+    roles_by_id = {
+        r.id: r for r in db.session.scalars(
+            select(Role).where(Role.id.in_([m.role_id for m in memberships]))
+        ).all()
+    } if memberships else {}
+
     return jsonify(
         id=g.user.id,
         email=g.user.email,
-        tenants=[m.tenant_id for m in memberships]
+        tenants=[m.tenant_id for m in memberships],
+        # Solo empresas de las que el usuario es miembro activo.
+        tenant_details=[
+            {
+                "id": m.tenant_id,
+                "name": tenants_by_id[m.tenant_id].name if m.tenant_id in tenants_by_id else None,
+                "slug": tenants_by_id[m.tenant_id].slug if m.tenant_id in tenants_by_id else None,
+                "role": roles_by_id[m.role_id].name if m.role_id in roles_by_id else None,
+            }
+            for m in memberships
+        ],
     ), 200
 
 
@@ -246,13 +297,26 @@ def members():
         )
     ).all()
 
+    users = {
+        u.id: u for u in db.session.scalars(
+            select(User).where(User.id.in_([m.user_id for m in memberships]))
+        ).all()
+    } if memberships else {}
+    roles = {
+        r.id: r for r in db.session.scalars(
+            select(Role).where(Role.tenant_id == g.tenant_id)
+        ).all()
+    }
+
     return jsonify(
         items=[
             {
                 "id": m.id,
                 "user_id": m.user_id,
                 "role_id": m.role_id,
-                "status": m.status
+                "status": m.status,
+                "email": users[m.user_id].email if m.user_id in users else None,
+                "role_name": roles[m.role_id].name if m.role_id in roles else None,
             }
             for m in memberships
         ]

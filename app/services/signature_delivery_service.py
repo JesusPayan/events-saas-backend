@@ -16,6 +16,7 @@ from app.models.contract_document import ContractDocument
 from app.models.contract_signature_request import ContractSignatureRequest
 from app.models.contract_signature_otp import ContractSignatureOtp
 from app.services.contract_document_service import read_verified_document
+from app.branding import BRAND_NAME, tenant_display_name
 from app.services.email_service import send_email, send_signature_otp, EmailDeliveryError
 from app.services.contract_protection_service import (
     ContractProtectedError,
@@ -176,17 +177,18 @@ def create_and_email_invitation(
         raise
 
     url = f'{frontend}/sign/{quote(token, safe="")}'
+    company_name = tenant_display_name(tenant_id)
 
     try:
         send_email(
             to_email=recipient,
-            subject="Invitación para firmar contrato - Eventos SaaS",
+            subject="Invitación para firmar contrato",
             text_body=(
                 f"Hola {recipient_name},\n\n"
-                "Tienes un contrato pendiente de firma.\n"
+                f"{company_name or 'Tu proveedor'} te envió un contrato pendiente de firma.\n"
                 f"Accede a tu enlace privado: {url}\n\n"
-                "El enlace vence en 72 horas. No lo compartas.\n"
-                "Eventos SaaS"
+                "El enlace vence en 72 horas. No lo compartas.\n\n"
+                f"Enviado mediante {BRAND_NAME}"
             ),
         )
 

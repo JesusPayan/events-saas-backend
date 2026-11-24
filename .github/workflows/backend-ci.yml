@@ -2,19 +2,20 @@
 name: Backend CI
 
 on:
+  workflow_call:
   workflow_dispatch:
 
   push:
     branches:
       - master
-      - develop
+      - development
       - "feature/**"
       - "fix/**"
 
   pull_request:
     branches:
       - master
-      - develop
+      - development
 
 permissions:
   contents: read

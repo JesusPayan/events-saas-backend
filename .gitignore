@@ -41,3 +41,17 @@ private_signatures/
 .png
 .jpeg
 .jpg
+# Archivos generados / datos locales (no versionar)
+uploads/
+private_contracts/
+private_signatures/
+*.log
+/git
+
+# Plantillas de despliegue (los .env reales los ignora deploy/.gitignore)
+!deploy/env/
+
+# Archivos de entorno con cualquier nombre (no versionar)
+*.env
+!.env.example
+!deploy/env/*.env.example

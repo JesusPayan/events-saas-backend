@@ -1,0 +1,20 @@
+# Certificados TLS automáticos (Let's Encrypt) para cada host de {$DOMAIN}.
+# DOMAIN admite varios hosts separados por coma, p. ej.:
+#   DOMAIN=app.easiacc.com, easiacc.com, www.easiacc.com
+# Todos sirven el mismo frontend: en la raíz se muestra la landing comercial y,
+# con sesión iniciada, la aplicación. Los hosts www.* redirigen al dominio sin www.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	@www header_regexp www Host ^www\.(.+)$
+	redir @www https://{re.www.1}{uri} permanent
+
+	encode zstd gzip
+	reverse_proxy frontend:8080
+	log {
+		output stdout
+		format json
+	}
+}

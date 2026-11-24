@@ -1,0 +1,368 @@
+"""Provider-confirmed subscription lifecycle. Never trust browser success redirects."""
+import hashlib
+import hmac
+import re
+import uuid
+from datetime import datetime, timedelta, timezone
+import logging
+from decimal import Decimal, InvalidOperation
+from urllib.parse import quote
+from flask import current_app
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from app.branding import PRODUCT_NAME
+from app.extensions import db
+from app.models.billing import BillingPlanPrice, BillingPlan, TenantSubscription, SubscriptionAudit, utc_now
+from app.models.mercadopago import MPCheckout, MPWebhookEvent, MPPayment
+from app.services.billing.mercadopago_client import api, MPError
+
+logger = logging.getLogger(__name__)
+
+
+def _abandon_checkout(checkout):
+    """Libera un checkout pendiente que el comprador nunca autorizó.
+
+    Intenta cancelar la preaprobación en Mercado Pago para que el enlace viejo no
+    pueda pagarse después. Si Mercado Pago no responde, se marca igualmente: un pago
+    tardío sobre ese enlace no se pierde, queda como incidencia de conciliación.
+    """
+    if checkout.provider_subscription_id:
+        try:
+            api('PUT', '/preapproval/' + quote(str(checkout.provider_subscription_id), safe=''),
+                {'status': 'cancelled'},
+                idempotency_key='abandon-' + checkout.external_reference)
+        except MPError as exc:
+            logger.warning('No se pudo cancelar en Mercado Pago un checkout abandonado: checkout_id=%s code=%s',
+                           checkout.id, exc.code)
+    checkout.status = 'abandoned'
+    db.session.commit()
+
+
+class BillingMPError(Exception):
+    def __init__(self, code, status=400):
+        self.code, self.status = code, status
+
+def signature_valid(header, request_id, resource_id):
+    secret = current_app.config.get('MP_WEBHOOK_SECRET')
+
+    if not secret or not header or not request_id or not resource_id:
+        return False
+
+    try:
+        parts = dict(
+            item.strip().split('=', 1)
+            for item in header.split(',')
+            if '=' in item
+        )
+    except (ValueError, AttributeError):
+        return False
+
+    ts = parts.get('ts')
+    digest = parts.get('v1')
+
+    if (
+        not ts
+        or not digest
+        or not ts.isdigit()
+        or not re.fullmatch(r'[a-fA-F0-9]{64}', digest)
+    ):
+        return False
+
+    # Aceptar timestamps Unix en segundos o milisegundos.
+    timestamp = int(ts)
+
+    if timestamp >= 10**12:
+        timestamp_seconds = timestamp / 1000
+    else:
+        timestamp_seconds = timestamp
+
+    now = datetime.now(timezone.utc).timestamp()
+
+    # Protección contra solicitudes antiguas o futuras.
+    if abs(now - timestamp_seconds) > 300:
+        return False
+
+    manifest = (
+        f'id:{str(resource_id).lower()};'
+        f'request-id:{request_id};'
+        f'ts:{ts};'
+    )
+
+    expected = hmac.new(
+        secret.encode('utf-8'),
+        manifest.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+
+    return hmac.compare_digest(expected, digest.lower())
+
+
+def create_checkout(tenant_id, price_id, payer_email):
+    if not isinstance(price_id, int) or isinstance(price_id, bool) or price_id < 1:
+        raise BillingMPError('invalid_plan_price', 422)
+    if not isinstance(payer_email, str) or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', payer_email) or len(payer_email) > 254:
+        raise BillingMPError('invalid_payer_email', 422)
+    price = db.session.get(BillingPlanPrice, price_id)
+    plan = db.session.get(BillingPlan, price.plan_id) if price else None
+    if not price or not price.active or not plan or not plan.active or price.currency != 'MXN' or price.amount <= 0:
+        raise BillingMPError('invalid_plan_price', 422)
+    current = db.session.scalar(select(TenantSubscription).where(TenantSubscription.tenant_id == tenant_id, TenantSubscription.status.in_(['active','trialing','past_due','paused'])).limit(1))
+    if current:
+        raise BillingMPError('subscription_already_exists', 409)
+    pending = db.session.scalar(select(MPCheckout).where(MPCheckout.tenant_id == tenant_id, MPCheckout.status.in_(['pending','authorized'])).order_by(MPCheckout.id.desc()).limit(1).with_for_update())
+    if pending:
+        ttl = int(current_app.config.get('MP_CHECKOUT_PENDING_TTL_MINUTES', 30))
+        expired = (pending.status == 'pending' and pending.created_at is not None
+                   and pending.created_at <= utc_now() - timedelta(minutes=ttl))
+        if not expired:
+            # 'authorized' nunca caduca aquí: el comprador ya autorizó y el cobro está en curso.
+            db.session.rollback()
+            raise BillingMPError('checkout_already_pending', 409)
+        _abandon_checkout(pending)
+    if not current_app.config.get('MP_BACK_URL', '').startswith('https://'):
+        raise BillingMPError('invalid_return_url', 503)
+    reference = 'evsaas-' + uuid.uuid4().hex
+    checkout = MPCheckout(tenant_id=tenant_id, plan_price_id=price.id, payer_email=payer_email, external_reference=reference)
+    db.session.add(checkout)
+    db.session.commit()
+    try:
+        result = api('POST', '/preapproval', {
+            'reason': f'{PRODUCT_NAME} - {plan.name}',
+            'external_reference': reference,
+            'payer_email': payer_email,
+            # La API de preaprobación solo admite frequency_type 'days' o 'months':
+            # el plan anual se expresa como 12 meses.
+            'auto_recurring': {'frequency': 1 if price.billing_interval == 'month' else 12, 'frequency_type': 'months',
+                               'transaction_amount': float(price.amount), 'currency_id': 'MXN'},
+            'back_url': current_app.config['MP_BACK_URL'],
+            'status': 'pending',
+        }, idempotency_key=reference)
+        if not isinstance(result, dict) or not result.get('id') or not result.get('init_point'):
+            raise MPError('invalid_provider_response')
+        checkout.provider_subscription_id = str(result['id'])
+        db.session.commit()
+        return {'checkout_id': checkout.id, 'init_point': result['init_point'], 'status': 'pending'}
+    except Exception:
+        checkout.status = 'failed'
+        db.session.commit()
+        raise
+
+def reconcile_preapproval(provider_id):
+    """Status alone is NOT evidence of a settled payment."""
+    remote = api('GET', '/preapproval/' + quote(str(provider_id), safe=''))
+    checkout = db.session.scalar(select(MPCheckout).where(MPCheckout.provider_subscription_id == str(provider_id)).with_for_update())
+    if not checkout or remote.get('external_reference') != checkout.external_reference or str(remote.get('id')) != str(provider_id):
+        return False
+    status = remote.get('status')
+    if status in ('cancelled','canceled'):
+        checkout.status = 'canceled'
+        sub = db.session.scalar(select(TenantSubscription).where(TenantSubscription.provider == 'mercadopago', TenantSubscription.provider_subscription_id == str(provider_id)).with_for_update())
+        if sub and sub.status != 'canceled':
+            old = sub.status
+            sub.status = 'canceled'
+            sub.canceled_at = utc_now()
+            # Política: el acceso pagado se conserva hasta el final del periodo ya cobrado.
+            sub.ended_at = (sub.current_period_end
+                            if sub.current_period_end and sub.current_period_end > sub.canceled_at
+                            else sub.canceled_at)
+            db.session.add(SubscriptionAudit(tenant_id=sub.tenant_id, subscription_id=sub.id, old_status=old, new_status='canceled', action='mp_canceled'))
+    elif status == 'authorized':
+        if checkout.status not in ('active', 'canceled'):
+            checkout.status = 'authorized'  # not active until a verified payment
+    elif status == 'paused':
+        sub = db.session.scalar(select(TenantSubscription).where(TenantSubscription.provider == 'mercadopago', TenantSubscription.provider_subscription_id == str(provider_id)).with_for_update())
+        if sub and sub.status in ('active', 'past_due'):
+            old = sub.status
+            sub.status = 'paused'
+            db.session.add(SubscriptionAudit(tenant_id=sub.tenant_id, subscription_id=sub.id, old_status=old, new_status='paused', action='mp_paused'))
+    db.session.commit()
+    return True
+
+
+def latest_checkout(tenant_id):
+    """Tenant-scoped view of the most recent checkout attempt (no provider data)."""
+    checkout = db.session.scalar(select(MPCheckout).where(MPCheckout.tenant_id == tenant_id)
+                                 .order_by(MPCheckout.id.desc()).limit(1))
+    if checkout is None:
+        return {'checkout': None}
+    return {'checkout': {'id': checkout.id, 'status': checkout.status, 'plan_price_id': checkout.plan_price_id,
+                         'created_at': checkout.created_at.isoformat() if checkout.created_at else None}}
+
+
+def cancel_tenant_subscription(tenant_id, actor_id):
+    """Ask Mercado Pago to cancel, then re-read the provider resource.
+
+    Local state changes ONLY after the provider confirms the cancellation, so a
+    failed or partial provider call never leaves a tenant falsely canceled.
+    """
+    sub = db.session.scalar(select(TenantSubscription).where(
+        TenantSubscription.tenant_id == tenant_id,
+        TenantSubscription.provider == 'mercadopago',
+        TenantSubscription.status.in_(['active', 'trialing', 'past_due', 'paused'])
+    ).order_by(TenantSubscription.id.desc()).limit(1))
+    if sub is None or not sub.provider_subscription_id:
+        # A pending/authorized checkout without a paid subscription can also be withdrawn.
+        checkout = db.session.scalar(select(MPCheckout).where(
+            MPCheckout.tenant_id == tenant_id, MPCheckout.status.in_(['pending', 'authorized']),
+            MPCheckout.provider_subscription_id.is_not(None)).order_by(MPCheckout.id.desc()).limit(1))
+        if checkout is None:
+            raise BillingMPError('subscription_not_found', 404)
+        provider_id = checkout.provider_subscription_id
+    else:
+        provider_id = sub.provider_subscription_id
+    db.session.rollback()
+    api('PUT', '/preapproval/' + quote(str(provider_id), safe=''), {'status': 'cancelled'},
+        idempotency_key='cancel-' + hashlib.sha256(str(provider_id).encode()).hexdigest()[:40])
+    reconcile_preapproval(provider_id)
+    if sub is not None:
+        db.session.refresh(sub)
+        if sub.status != 'canceled':
+            raise BillingMPError('cancellation_not_confirmed', 502)
+        audit = db.session.scalar(select(SubscriptionAudit).where(
+            SubscriptionAudit.subscription_id == sub.id, SubscriptionAudit.action == 'mp_canceled'
+        ).order_by(SubscriptionAudit.id.desc()).limit(1))
+        if audit is not None and audit.actor_id is None:
+            audit.actor_id = actor_id
+            db.session.commit()
+        return {'status': sub.status}
+    return {'status': 'canceled'}
+
+_SETTLED = frozenset(('approved',))
+_REVERSED = frozenset(('refunded', 'charged_back'))
+_FAILED = frozenset(('rejected', 'cancelled', 'canceled'))
+
+
+def effective_payment_status(invoice):
+    """Return the status of the underlying charge of an authorized_payment.
+
+    The invoice's top-level ``status`` (scheduled/processed/recycling/cancelled)
+    only says whether a charge was attempted. ``processed`` does NOT mean the
+    money was collected: the nested ``payment.status`` carries the result
+    (approved, rejected, refunded, charged_back, ...). Fail closed: an invoice
+    without a verifiable charge result is never treated as approved.
+    """
+    nested = invoice.get('payment')
+    if isinstance(nested, dict) and isinstance(nested.get('status'), str):
+        return nested['status'].lower()
+    top = invoice.get('status')
+    if isinstance(top, str) and top.lower() in (_SETTLED | _REVERSED | _FAILED):
+        return top.lower()
+    return 'unverified'
+
+
+def reconcile_payment(payment_id):
+    """Verify payment via API; match amount/currency and provider subscription before granting access."""
+    payment = api('GET', '/authorized_payments/' + quote(str(payment_id), safe=''))
+    if not isinstance(payment, dict) or str(payment.get('id')) != str(payment_id):
+        db.session.rollback()
+        return False
+    provider_id = str(payment.get('preapproval_id') or '')
+    # Serialize all payments for this provider subscription on the EXISTING
+    # checkout row, including the very first payment before a subscription exists.
+    # InnoDB SELECT ... FOR UPDATE requires an open transaction.
+    try:
+        checkout = db.session.scalar(
+            select(MPCheckout).where(
+                MPCheckout.provider_subscription_id == provider_id
+            ).with_for_update()
+        )
+        if not checkout:
+            db.session.rollback()
+            return False
+        price = db.session.get(BillingPlanPrice, checkout.plan_price_id)
+        try:
+            amount = Decimal(str(payment.get('transaction_amount')))
+        except (InvalidOperation, TypeError):
+            db.session.rollback()
+            return False
+        if not price or payment.get('currency_id') != price.currency or amount != price.amount:
+            db.session.rollback()
+            return False
+        status = effective_payment_status(payment)
+        # Re-fetch every time. A payment can later be refunded or charged back.
+        existing = db.session.scalar(select(MPPayment).where(
+            MPPayment.provider_payment_id == str(payment_id)).with_for_update())
+        if existing:
+            if existing.provider_subscription_id != provider_id or existing.amount != amount or existing.currency != price.currency:
+                db.session.rollback()
+                return False
+            if status in ('refunded', 'charged_back'):
+                if existing.status != status:
+                    existing.status = status
+                    sub = db.session.scalar(select(TenantSubscription).where(
+                        TenantSubscription.provider == 'mercadopago',
+                        TenantSubscription.provider_subscription_id == provider_id).with_for_update())
+                    if sub:
+                        # Do not silently claw back a period; require a reviewed
+                        # commercial policy and fraud workflow before revocation.
+                        db.session.add(SubscriptionAudit(
+                            tenant_id=sub.tenant_id, subscription_id=sub.id,
+                            old_status=sub.status, new_status=sub.status,
+                            action='mp_payment_reversed'))
+                    db.session.commit()
+                else:
+                    db.session.rollback()
+                return True
+            if status in _SETTLED:
+                if existing.status in _REVERSED:
+                    db.session.rollback()  # stale/out-of-order positive notification
+                    return False
+                db.session.rollback()
+                return True
+            db.session.rollback()
+            return False
+        if status not in _SETTLED:
+            if status in _FAILED:
+                sub = db.session.scalar(select(TenantSubscription).where(
+                    TenantSubscription.provider == 'mercadopago',
+                    TenantSubscription.provider_subscription_id == provider_id).with_for_update())
+                if sub is not None:
+                    # Renewal charge failed: keep paid-through access untouched
+                    # (entitlements expire at current_period_end) and mark the
+                    # account past_due once that period is over.
+                    old = sub.status
+                    if sub.status == 'active' and sub.current_period_end and sub.current_period_end <= utc_now():
+                        sub.status = 'past_due'
+                    db.session.add(SubscriptionAudit(
+                        tenant_id=sub.tenant_id, subscription_id=sub.id,
+                        old_status=old, new_status=sub.status,
+                        action='mp_payment_rejected'))
+                    db.session.commit()
+                    return True
+            db.session.rollback()
+            return False
+        sub = db.session.scalar(select(TenantSubscription).where(TenantSubscription.provider == 'mercadopago', TenantSubscription.provider_subscription_id == provider_id).with_for_update())
+        if sub is None:
+            active = db.session.scalar(select(TenantSubscription).where(TenantSubscription.tenant_id == checkout.tenant_id, TenantSubscription.status.in_(['active','trialing','past_due','paused'])).limit(1))
+            if active:
+                db.session.rollback()
+                return False
+            sub = TenantSubscription(tenant_id=checkout.tenant_id, plan_price_id=checkout.plan_price_id, status='incomplete', provider='mercadopago', provider_subscription_id=provider_id)
+            db.session.add(sub)
+            db.session.flush()
+        if sub.status == 'canceled':
+            db.session.rollback()
+            return False
+        old = sub.status
+        from app.services.billing.subscription_admin_service import _period
+        now = utc_now()
+        sub.status = 'active'
+        # Extend from the paid-through date for early renewals; never shorten paid access.
+        # For late payments, begin a new period when the payment is verified.
+        period_start = max(now, sub.current_period_end) if sub.current_period_end else now
+        sub.current_period_start = period_start
+        sub.current_period_end = _period(period_start, price.billing_interval)
+        sub.updated_at = now
+        checkout.status = 'active'
+        db.session.add(MPPayment(provider_payment_id=str(payment_id), provider_subscription_id=provider_id, status=status, amount=amount, currency=price.currency))
+        db.session.add(SubscriptionAudit(tenant_id=sub.tenant_id, subscription_id=sub.id, old_status=old, new_status='active', action='mp_payment_verified'))
+        db.session.commit()
+        return True
+    except IntegrityError:
+        # A uniqueness violation must not leave a poisoned session.
+        # The caller may retry; do not treat unknown conflicts as success.
+        db.session.rollback()
+        return False
+    except Exception:
+        db.session.rollback()
+        raise

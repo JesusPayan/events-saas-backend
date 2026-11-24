@@ -16,6 +16,14 @@ CATALOG = (
 )
 
 
+# Nivel gratuito: se aplica a empresas sin suscripción vigente. No tiene precios
+# ni se ofrece en el catálogo. Límites editables en MySQL (billing_plan_entitlements).
+FREE_PLAN_CODE = "free"
+FREE_TIER = {"code": FREE_PLAN_CODE, "name": "Gratuito", "description": "Funciones básicas sin costo",
+             "features": {"members": 1, "clients": 25, "events": 10, "inventory": 1, "quotes_contracts": 1,
+                          "advanced_reports": 0, "external_api": 0}}
+
+
 class CatalogConflict(RuntimeError):
     """Existing catalog differs from the approved seed; manual review needed."""
 
@@ -51,8 +59,18 @@ def seed_billing_catalog():
                     db.session.add(BillingPlanPrice(plan_id=plan.id, currency="MXN", billing_interval=interval,
                                                     amount=amount, version=1, active=True))
                     created["prices"] += 1
-                elif Decimal(price.amount) != amount or not price.active:
+                elif Decimal(price.amount) != amount:
                     raise CatalogConflict(f"Price {item['code']}/{interval}/v1 differs from approved catalog")
+                elif not price.active:
+                    # v1 may be retired only by operator versioning (a newer version exists).
+                    newer = db.session.scalar(select(BillingPlanPrice.id).where(
+                        BillingPlanPrice.plan_id == plan.id,
+                        BillingPlanPrice.currency == "MXN",
+                        BillingPlanPrice.billing_interval == interval,
+                        BillingPlanPrice.version > 1,
+                    ).limit(1))
+                    if newer is None:
+                        raise CatalogConflict(f"Price {item['code']}/{interval}/v1 is inactive without a newer version")
 
             for code, limit in item["features"].items():
                 entitlement = db.session.scalar(select(BillingPlanEntitlement).where(
@@ -64,6 +82,31 @@ def seed_billing_catalog():
                     created["entitlements"] += 1
                 elif entitlement.limit_value != limit:
                     raise CatalogConflict(f"Entitlement {item['code']}/{code} differs from approved catalog")
+        db.session.commit()
+        return created
+    except Exception:
+        db.session.rollback()
+        raise
+
+
+def seed_free_tier():
+    """Insert the free tier if missing. Existing limits are never overwritten
+    (operators may have tuned them in MySQL)."""
+    created = {"plans": 0, "entitlements": 0}
+    try:
+        plan = db.session.scalar(select(BillingPlan).where(BillingPlan.code == FREE_PLAN_CODE))
+        if plan is None:
+            plan = BillingPlan(code=FREE_PLAN_CODE, name=FREE_TIER["name"],
+                               description=FREE_TIER["description"], active=True)
+            db.session.add(plan)
+            db.session.flush()
+            created["plans"] += 1
+        for code, limit in FREE_TIER["features"].items():
+            exists = db.session.scalar(select(BillingPlanEntitlement.id).where(
+                BillingPlanEntitlement.plan_id == plan.id, BillingPlanEntitlement.feature_code == code))
+            if exists is None:
+                db.session.add(BillingPlanEntitlement(plan_id=plan.id, feature_code=code, limit_value=limit))
+                created["entitlements"] += 1
         db.session.commit()
         return created
     except Exception:

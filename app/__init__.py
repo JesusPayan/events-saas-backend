@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from flask import Flask, app, request, g, current_app
 from flask_cors import CORS
 from sqlalchemy.engine import make_url
-from app.extensions import db, migrate, jwt_manager
+from app.extensions import db, migrate, jwt_manager, limiter
 from app.models.inventory_incident import InventoryIncident
 from app.api.inventory_incidents import bp as inventory_incidents_bp
 from app.models.inventory_adjustment import InventoryAdjustment
@@ -32,9 +32,78 @@ from app.models.billing import (
     BillingPlanEntitlement,
     TenantSubscription,
     SubscriptionAudit,
+    BillingPriceAudit,
 )
 from app.api.billing import bp as billing_bp
 from app.api.billing_admin import bp as billing_admin_bp
+from app.models.mercadopago import MPCheckout, MPWebhookEvent, MPPayment, MPReconciliationIssue  # noqa: F401
+from app.models.identity import TenantInvitation  # noqa: F401
+from app.api.mercadopago import bp as mercadopago_bp
+from app.api.members import bp as members_bp
+from app.api.public import bp as public_bp
+_WEAK_SECRETS = {"", "dev-only-not-for-production", "replace-with-random-secret", "change-me"}
+
+
+def _parse_id_list(raw):
+    ids = []
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if part.isdigit() and int(part) > 0:
+            ids.append(int(part))
+    return frozenset(ids)
+
+
+def _validate_production_config(app):
+    """Fail fast on unsafe production settings instead of running insecurely."""
+    problems = []
+    for key in ("SECRET_KEY", "JWT_SECRET_KEY", "SIGNATURE_OTP_SECRET"):
+        value = os.getenv(key) or app.config.get(key) or ""
+        if value in _WEAK_SECRETS or len(value) < 32:
+            problems.append(f"{key} debe tener al menos 32 caracteres aleatorios")
+    if not app.config.get("MP_ACCESS_TOKEN"):
+        problems.append("MP_ACCESS_TOKEN es obligatorio")
+    if len(app.config.get("MP_WEBHOOK_SECRET") or "") < 16:
+        problems.append("MP_WEBHOOK_SECRET es obligatorio")
+    db_uri = str(app.config.get("SQLALCHEMY_DATABASE_URI") or "")
+    if not app.config.get("DB_TLS_CONFIGURED") and "ssl" not in db_uri.lower() and \
+            os.getenv("DB_ALLOW_PLAINTEXT", "false").lower() not in ("true", "1"):
+        problems.append("la conexión a MySQL debe usar TLS (define DB_SSL_CA con el CA del proveedor)")
+    if not (app.config.get("MP_BACK_URL") or "").startswith("https://"):
+        problems.append("MP_BACK_URL debe ser https://")
+    origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+    if not origins or any(not o.startswith("https://") for o in origins):
+        problems.append("CORS_ORIGINS debe listar solo orígenes https://")
+    if not (os.getenv("FRONTEND_PUBLIC_URL") or "").startswith("https://"):
+        problems.append("FRONTEND_PUBLIC_URL debe ser https://")
+    if (app.config.get("RATELIMIT_STORAGE_URI") or "").startswith("memory://") and \
+            os.getenv("RATELIMIT_ALLOW_MEMORY", "false").lower() not in ("true", "1"):
+        problems.append("RATELIMIT_STORAGE_URI debe apuntar a un almacenamiento compartido (p. ej. redis://)")
+    if problems:
+        raise RuntimeError("Configuración de producción inválida: " + "; ".join(problems))
+
+
+def _configure_db_tls(app):
+    """TLS hacia MySQL administrado verificando el CA del proveedor (DB_SSL_CA).
+
+    Python 3.13 activa VERIFY_X509_STRICT, que rechaza algunos certificados de bases
+    administradas (p. ej. sin Authority Key Identifier). Se conserva la verificación de
+    la cadena contra el CA indicado; solo se omiten esas comprobaciones adicionales.
+    """
+    ca_file = os.getenv("DB_SSL_CA", "").strip()
+    if not ca_file:
+        return
+    import ssl
+    context = ssl.create_default_context(cafile=ca_file)
+    context.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
+    context.check_hostname = os.getenv("DB_SSL_VERIFY_HOSTNAME", "true").lower() in ("true", "1", "yes")
+    options = dict(app.config.get("SQLALCHEMY_ENGINE_OPTIONS") or {})
+    connect_args = dict(options.get("connect_args") or {})
+    connect_args["ssl"] = context
+    options["connect_args"] = connect_args
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = options
+    app.config["DB_TLS_CONFIGURED"] = True
+
+
 def create_app(config_override=None):
 
     # ==============================================
@@ -58,6 +127,18 @@ def create_app(config_override=None):
     app = Flask(__name__)
 
     app.config.from_object("app.config.Config")
+
+    # Detrás de un proxy TLS (nginx/balanceador): número de proxies de confianza.
+    # 0 = sin proxy (no se confía en X-Forwarded-*).
+    trusted_proxies = int(os.getenv("TRUSTED_PROXY_COUNT", "0") or 0)
+    if trusted_proxies > 0:
+        from werkzeug.middleware.proxy_fix import ProxyFix
+        app.wsgi_app = ProxyFix(
+            app.wsgi_app,
+            x_for=trusted_proxies,
+            # El proxy más cercano reenvía el esquema original (un solo valor).
+            x_proto=1,
+        )
     app.config["CHECK_DB_ON_STARTUP"] = (
         os.getenv("CHECK_DB_ON_STARTUP", "true").lower()
         in ("true", "1", "yes")
@@ -109,6 +190,7 @@ def create_app(config_override=None):
     )
 
     app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+    _configure_db_tls(app)
 
     app.config[
         "SQLALCHEMY_TRACK_MODIFICATIONS"
@@ -126,6 +208,25 @@ def create_app(config_override=None):
         app.config[
             "JWT_SECRET_KEY"
         ] = jwt_secret
+    app.config['MP_ACCESS_TOKEN'] = os.getenv('MP_ACCESS_TOKEN', '')
+    app.config['MP_WEBHOOK_SECRET'] = os.getenv('MP_WEBHOOK_SECRET', '')
+    app.config['MP_BACK_URL'] = os.getenv('MP_BACK_URL', '')
+    app.config['SESSION_MAX_AGE'] = int(os.getenv('SESSION_MAX_AGE', str(12 * 3600)))
+    # Minutos tras los cuales un checkout no autorizado deja de bloquear un nuevo intento.
+    app.config['MP_CHECKOUT_PENDING_TTL_MINUTES'] = int(os.getenv('MP_CHECKOUT_PENDING_TTL_MINUTES', '30'))
+
+    # Operadores globales de la plataforma (IDs de usuario separados por coma).
+    app.config['BILLING_OPERATOR_USER_IDS'] = _parse_id_list(
+        os.getenv('BILLING_OPERATOR_USER_IDS', '')
+    )
+    app.config['BILLING_ENFORCE_ENTITLEMENTS'] = (
+        os.getenv('BILLING_ENFORCE_ENTITLEMENTS', 'false').lower() in ('true', '1', 'yes')
+    )
+    app.config['RATELIMIT_STORAGE_URI'] = os.getenv('RATELIMIT_STORAGE_URI', 'memory://')
+    app.config['RATELIMIT_HEADERS_ENABLED'] = True
+    # Las pruebas automatizadas registran muchos usuarios; el límite se prueba explícitamente.
+    app.config['RATELIMIT_ENABLED'] = env != 'test'
+    app.config['MAX_CONTENT_LENGTH'] = int(os.getenv('MAX_CONTENT_LENGTH', str(20 * 1024 * 1024)))
 
     # ==============================================
     # 6. CONFIGURACIÓN ADICIONAL
@@ -172,6 +273,7 @@ def create_app(config_override=None):
     elif env == "production":
         if backend != "mysql":
             raise RuntimeError("Production requiere MySQL.")
+        _validate_production_config(app)
 
     # ==============================================
     # 8. CONFIGURAR CARPETA DE ARCHIVOS
@@ -251,7 +353,8 @@ def create_app(config_override=None):
     from app.models.inventory_movement import (
         InventoryMovement
     )
-    
+    from app.api.billing_prices_admin import bp as billing_prices_admin_bp
+    app.register_blueprint(billing_prices_admin_bp, url_prefix='/api/v1')
     # ==============================================
     # 10. INICIALIZAR EXTENSIONES
     # ==============================================
@@ -264,6 +367,7 @@ def create_app(config_override=None):
     )
 
     jwt_manager.init_app(app)
+    limiter.init_app(app)
 
     # ==============================================
     # 11. VERIFICAR CONEXIÓN
@@ -426,7 +530,10 @@ def create_app(config_override=None):
     payment_receipts_bp,
     company_receipts_bp,
       billing_bp,
-      billing_admin_bp
+      billing_admin_bp,
+      mercadopago_bp,
+      members_bp,
+      public_bp
 ]
 
 
@@ -448,6 +555,31 @@ def create_app(config_override=None):
         g.request_start_time = (
             time.perf_counter()
         )
+
+    @app.after_request
+    def security_headers(response):
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        if env == "production":
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+            )
+        return response
+
+    @app.errorhandler(413)
+    def payload_too_large(_error):
+        return {"error": "payload_too_large"}, 413
+
+    @app.errorhandler(429)
+    def rate_limited(_error):
+        return {"error": "rate_limited"}, 429
+
+    @app.errorhandler(500)
+    def internal_error(_error):
+        db.session.rollback()
+        return {"error": "internal_server_error"}, 500
 
     @app.after_request
     def log_request_duration(response):

@@ -1,4 +1,5 @@
 """COM-02.1: PDF de contrato (presentación documental, no firma electrónica)."""
+from app.branding import BRAND_NAME
 from io import BytesIO
 from decimal import Decimal
 from html import escape
@@ -134,7 +135,7 @@ def generate_contract_pdf(*, contract, tenant, client, event):
         canvas.saveState()
         canvas.setFont('Helvetica', 8)
         canvas.setFillColor(MUTED)
-        canvas.drawString(19*mm, 12*mm, 'Eventos SaaS · Documento contractual')
+        canvas.drawString(19*mm, 12*mm, f'Documento contractual · Generado con {BRAND_NAME}')
         canvas.drawRightString(191*mm, 12*mm, f'Página {document.page}')
         canvas.restoreState()
 

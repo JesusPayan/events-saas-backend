@@ -21,7 +21,8 @@ def require_entitlement(feature_code, *, serialize_creates=False):
             if not result['allowed']:
                 db.session.rollback()  # releases any lock on rejection
                 return jsonify(error='billing_entitlement_denied', feature_code=feature_code,
-                               reason=result['reason'], limit=result['limit'], used=result['used']), 403
+                               reason=result['reason'], limit=result['limit'], used=result['used'],
+                               tier=result.get('tier')), 403
             return fn(*args, **kwargs)
         return wrapped
     return decorate
