@@ -4,6 +4,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y 
 La versión técnica **1.1.0** corresponde al lanzamiento comercial **EasiAcc Events 1.0**.
 Los PR citados son del repositorio backend salvo que se indique `frontend#`.
 
+## [Sin publicar]
+
+### Documentación
+- `docs/PUESTA_EN_MARCHA.md`: pasos para correo transaccional, webhook de Mercado Pago, revisión legal, backups,
+  restauración y monitoreo externo.
+- `deploy/LINODE.md` y ejemplos de configuración actualizados a `easiacc.com`, staging y `v1.1.0`.
+
 ## [1.1.0] — EasiAcc Events 1.0 (versión candidata)
 
 ### Añadido

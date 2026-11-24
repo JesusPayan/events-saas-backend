@@ -20,7 +20,7 @@ Internet ──443──> caddy (Let's Encrypt) ──> frontend:8080 (nginx, SP
 |---|---|
 | Servidor Ubuntu 24.04 | 2 vCPU, 4 GB RAM, 50 GB SSD, IP fija |
 | MySQL 8 administrado | Plan básico con backups automáticos diarios y PITR, mismo proveedor y región |
-| Dominio | Registro A `app.tu-dominio.com` → IP del servidor (y `staging.tu-dominio.com`) |
+| Dominio | Registro A `app.easiacc.com`, `easiacc.com` y `www` → IP del servidor (y `staging.easiacc.com`); ver `LINODE.md` |
 | Almacenamiento externo de backups (opcional, recomendado) | Bucket S3/B2 configurado en `rclone` |
 
 Staging: un segundo servidor pequeño (1 vCPU / 2 GB) o el mismo con otro `STACK_NAME`, siempre con **otra
@@ -53,12 +53,12 @@ Si las imágenes de GHCR son privadas: `docker login ghcr.io` con un token de Gi
 
 ## 4. Publicar imágenes y desplegar
 
-1. En GitHub, crear el tag `v1.0.0` en ambos repositorios (tras fusionar los PR). El workflow
-   `Release image` publica `ghcr.io/jesuspayan/<repo>:v1.0.0`.
+1. En GitHub, crear el tag `vX.Y.Z` en ambos repositorios (tras fusionar los PR). El workflow
+   `Release image` publica `ghcr.io/jesuspayan/<repo>:vX.Y.Z`.
 2. En el servidor:
    ```bash
    cd /opt/eventos/deploy
-   scripts/deploy.sh v1.0.0      # backup -> pull -> migraciones -> arranque -> verificación https
+   scripts/deploy.sh v1.1.0      # backup -> pull -> migraciones -> arranque -> verificación https
    docker compose --env-file env/stack.env exec backend \
      python -m scripts.seed_billing_catalog --allow-production --confirm-database eventos_saas_prod
    ```
@@ -71,8 +71,8 @@ Si las imágenes de GHCR son privadas: `docker login ghcr.io` con un token de Gi
 
 | Acción | Comando |
 |---|---|
-| Nueva versión | `scripts/deploy.sh v1.0.1` |
-| Rollback | `scripts/deploy.sh v1.0.0` (las migraciones v1 son aditivas) |
+| Nueva versión | `scripts/deploy.sh v1.1.1` (siguiente versión) |
+| Rollback | `scripts/deploy.sh <tag-anterior>` (las migraciones v1 son aditivas) |
 | Backup manual | `scripts/backup.sh` |
 | Probar restauración | `scripts/restore-check.sh /var/backups/eventos/<fecha>` |
 | Logs | `docker compose --env-file env/stack.env logs -f backend` |

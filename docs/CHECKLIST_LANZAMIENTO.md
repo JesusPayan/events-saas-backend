@@ -1,6 +1,6 @@
 # Checklist de lanzamiento — EasiAcc Events 1.0 (v1.1.0)
 
-Estado detallado y riesgos: `docs/PROJECT_STATUS.md`. Rollback: `docs/ROLLBACK.md`.
+Estado detallado y riesgos: `docs/PROJECT_STATUS.md`. Pasos para cada bloqueador: `docs/PUESTA_EN_MARCHA.md`. Rollback: `docs/ROLLBACK.md`.
 
 Marca cada punto con evidencia (fecha, responsable, enlace a log o captura).
 
@@ -52,6 +52,6 @@ Marca cada punto con evidencia (fecha, responsable, enlace a log o captura).
 
 - [x] Identidad EasiAcc Events aplicada (logos, favicon, correos, PDF) — `frontend/docs/BRAND_GUIDELINES.md`.
 - [x] Landing en `easiacc.com` con precios desde MySQL.
-- [ ] Correo de contacto comercial en `BRAND.contactEmail`.
+- [x] Correo de contacto comercial en `BRAND.contactEmail` (`contacto@easiacc.com`; el buzón debe existir antes de publicar).
 - [ ] Aviso de privacidad y términos aprobados por abogado y publicados (`frontend/docs/legal/`).
 - [ ] Búsqueda y solicitud de registro de la marca EasiAcc en el IMPI.
