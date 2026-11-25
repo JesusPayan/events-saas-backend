@@ -66,6 +66,13 @@ def mock_database(*, membership=True, permission=True, document=None):
         if "memberships" in sql:
             return member if membership else None
 
+        # ROLES-01: sin acceso delegado y con la organización activa.
+        if "tenant_access_grants" in sql:
+            return None
+
+        if "from tenants" in sql:
+            return "active"
+
         if "permissions" in sql:
             return 1 if permission else None
 

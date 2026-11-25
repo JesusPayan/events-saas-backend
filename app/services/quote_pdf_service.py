@@ -204,7 +204,8 @@ def generate_quote_pdf(quote, tenant, client, event):
                 styles["QuoteRight"],
             ),
             Paragraph(
-                currency(item.unit_price),
+                "Pendiente" if getattr(item, "price_status", "confirmed") == "pending"
+                else currency(item.unit_price),
                 styles["QuoteRight"],
             ),
             Paragraph(
@@ -216,7 +217,8 @@ def generate_quote_pdf(quote, tenant, client, event):
                 styles["QuoteRight"],
             ),
             Paragraph(
-                currency(item.total),
+                "Por cotizar" if getattr(item, "price_status", "confirmed") == "pending"
+                else currency(item.total),
                 styles["QuoteRight"],
             ),
         ])
@@ -256,6 +258,11 @@ def generate_quote_pdf(quote, tenant, client, event):
         ["Impuestos", currency(quote.tax_total)],
         ["TOTAL", currency(quote.total)],
     ]
+    pending_prices = sum(1 for i in quote.items if getattr(i, "price_status", "confirmed") == "pending")
+    if pending_prices:
+        # CAT-01: las partidas por cotizar no suman al total confirmado.
+        summary_rows[-1][0] = "TOTAL CONFIRMADO"
+        summary_rows.append([f"{pending_prices} partida(s) por cotizar", "—"])
 
     summary = Table(
         summary_rows,

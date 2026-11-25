@@ -12,6 +12,9 @@ from app.models import Tenant
 from app.models.identity import User, Role, Permission, RolePermission, Membership
 from app.security import authenticate, tenant_permission, issue_token, session_version
 from app.services.members_service import OWNER_PERMISSIONS
+from app.services.platform_service import (
+    active_roles, delegated_tenants, platform_permissions, record_referral,
+)
 from app.branding import BRAND_NAME, EMAIL_SIGNATURE
 from app.services.email_service import EmailDeliveryError, send_email
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -38,6 +41,7 @@ def register():
     password = data.get("password", "")
     slug = data.get("slug", "")
     name = data.get("company_name", "")
+    referral_code = data.get("ref")
 
     if not all(
         isinstance(value, str)
@@ -118,7 +122,10 @@ def register():
         )
         db.session.add(membership)
 
-        # 6. Confirmar operación
+        # 6. Referido de un promotor (opcional; un código inválido no bloquea el alta)
+        record_referral(tenant.id, email, referral_code)
+
+        # 7. Confirmar operación
         db.session.commit()
 
         return jsonify(
@@ -259,7 +266,7 @@ def me():
     return jsonify(
         id=g.user.id,
         email=g.user.email,
-        tenants=[m.tenant_id for m in memberships],
+        tenants=[m.tenant_id for m in memberships] + [d["id"] for d in delegated_tenants(g.user.id)],
         # Solo empresas de las que el usuario es miembro activo.
         tenant_details=[
             {
@@ -267,9 +274,14 @@ def me():
                 "name": tenants_by_id[m.tenant_id].name if m.tenant_id in tenants_by_id else None,
                 "slug": tenants_by_id[m.tenant_id].slug if m.tenant_id in tenants_by_id else None,
                 "role": roles_by_id[m.role_id].name if m.role_id in roles_by_id else None,
+                "status": tenants_by_id[m.tenant_id].status if m.tenant_id in tenants_by_id else None,
             }
             for m in memberships
-        ],
+        ] + delegated_tenants(g.user.id),
+        platform={
+            "roles": sorted(active_roles(g.user.id)),
+            "permissions": sorted(platform_permissions(g.user.id)),
+        },
     ), 200
 
 
@@ -284,7 +296,8 @@ def current_tenant():
     return jsonify(
         id=tenant.id,
         name=tenant.name,
-        slug=tenant.slug
+        slug=tenant.slug,
+        status=tenant.status,
     ), 200
 
 
@@ -317,6 +330,7 @@ def members():
                 "status": m.status,
                 "email": users[m.user_id].email if m.user_id in users else None,
                 "role_name": roles[m.role_id].name if m.role_id in roles else None,
+                "provider_id": m.provider_id,
             }
             for m in memberships
         ]
@@ -335,6 +349,11 @@ def get_permissions():
     )
 
     if membership is None:
+        # Acceso delegado vigente: solo permisos de lectura (ROLES-01).
+        if getattr(g, "access_grant", None) is not None:
+            from app.security import DELEGATED_READ_PERMISSIONS
+            return jsonify(tenant_id=g.tenant_id, permissions=sorted(DELEGATED_READ_PERMISSIONS),
+                           delegated=True, expires_at=g.access_grant.expires_at.isoformat()), 200
         return jsonify(error="membership_not_found"), 403
 
     permissions = db.session.scalars(
@@ -352,5 +371,6 @@ def get_permissions():
 
     return jsonify(
         tenant_id=g.tenant_id,
-        permissions=list(permissions)
+        permissions=list(permissions),
+        provider_id=membership.provider_id,
     ), 200

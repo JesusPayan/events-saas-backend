@@ -1,4 +1,6 @@
 from app.models.tenant import Tenant
+from app.models import platform as _platform  # noqa: F401  ROLES-01
+from app.models import catalog as _catalog  # noqa: F401  CAT-01
 from .quote import Quote
 from .quote_item import QuoteItem
 from .quote_version import QuoteVersion

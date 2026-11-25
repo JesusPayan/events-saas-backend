@@ -18,7 +18,7 @@ def utc_now():
 class Quote(db.Model):
     __tablename__ = "quotes"
 
-    id = db.Column(db.BigInteger, primary_key=True, autoincrement=True)
+    id = db.Column(db.BigInteger().with_variant(db.Integer, "sqlite"), primary_key=True, autoincrement=True)
     tenant_id = db.Column(db.BigInteger, nullable=False)
     event_id = db.Column(db.BigInteger, nullable=False)
     client_id = db.Column(db.BigInteger, nullable=False)

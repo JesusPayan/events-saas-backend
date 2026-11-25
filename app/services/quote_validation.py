@@ -109,7 +109,9 @@ def validate_quote(data, tenant_id):
         allowed_item = {
             "item_type", "inventory_item_id",
             "description", "quantity", "unit_price",
-            "discount_amount", "tax_rate"
+            "discount_amount", "tax_rate",
+            # CAT-01: partidas del catálogo de servicios.
+            "offer_id", "guests", "hours", "service_notes", "price_pending",
         }
 
         unknown = set(item) - allowed_item
@@ -117,6 +119,53 @@ def validate_quote(data, tenant_id):
             raise QuoteValidationError({
                 f"items[{index}]": "unknown_fields",
                 "fields": sorted(unknown)
+            })
+
+        catalog_fields = {
+            "offer_id": None, "provider_id": None, "category_id": None,
+            "pricing_mode": None, "price_status": "confirmed",
+            "fulfillment_status": "not_required",
+            "compliance_status": "not_required", "service_details": None,
+        }
+        if item.get("offer_id") is not None:
+            from app.services.catalog_service import CatalogError, build_offer_item
+            try:
+                built = build_offer_item(tenant_id, item["offer_id"], event_id, item, index)
+            except CatalogError as exc:
+                raise QuoteValidationError(
+                    {f"items[{index}].offer_id": exc.code},
+                    404 if exc.status == 404 else 400,
+                ) from exc
+            if item.get("item_type") not in (None, built["item_type"]):
+                raise QuoteValidationError({
+                    f"items[{index}].item_type": "does_not_match_offer"
+                })
+            item = dict(item)
+            item["item_type"] = built.pop("item_type")
+            item["inventory_item_id"] = built.pop("inventory_item_id")
+            default_description = built.pop("default_description")
+            default_price = built.pop("default_unit_price")
+            if not item.get("description"):
+                item["description"] = default_description
+            if built["price_status"] == "pending":
+                item["unit_price"] = "0"
+                item["discount_amount"] = "0"
+            elif item.get("unit_price") is None:
+                item["unit_price"] = str(default_price)
+            catalog_fields.update(built)
+        elif item.get("price_pending") is not None:
+            # Concepto libre de servicio cuyo precio se acordará después.
+            if item["price_pending"] is not True or item.get("item_type") not in ("service", "custom"):
+                raise QuoteValidationError({
+                    f"items[{index}].price_pending": "only_true_for_service_or_custom"
+                })
+            item = dict(item)
+            item["unit_price"] = "0"
+            item["discount_amount"] = "0"
+            catalog_fields.update(price_status="pending", pricing_mode="quote")
+        elif any(item.get(f) is not None for f in ("guests", "hours", "service_notes")):
+            raise QuoteValidationError({
+                f"items[{index}]": "service_fields_require_offer"
             })
 
         item_type = item.get("item_type")
@@ -214,6 +263,7 @@ def validate_quote(data, tenant_id):
             "inventory_item_id": inventory_item_id,
             "description": description.strip(),
             **calculated,
+            **catalog_fields,
             "sort_order": index
         })
 

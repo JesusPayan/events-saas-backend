@@ -6,6 +6,21 @@ Los PR citados son del repositorio backend salvo que se indique `frontend#`.
 
 ## [Sin publicar]
 
+### Añadido
+- **Roles administrativos con alcance** (ROLES-01): dueño y administrador de plataforma, promotor y roles reservados
+  (soporte, finanzas, auditoría); transferencia de propiedad sin quedar sin dueño; alta y suspensión de
+  organizaciones; invitaciones a roles de plataforma; enlaces de referido y prospectos; accesos temporales de solo
+  lectura concedidos por la organización; bitácora `audit_events`. Ver `docs/ROLES_Y_CATALOGO.md`.
+- **Catálogo de productos y servicios** (CAT-01): categorías globales con subcategorías, proveedores por organización,
+  ofertas con modalidad de precio y tipo de confirmación, partidas mixtas en cotizaciones con precio pendiente fuera
+  del total, portal del proveedor y bloqueo de aceptación con pendientes.
+- Migración aditiva `c06000000001` y script `scripts.grant_platform_owner`.
+
+### Cambiado
+- Las organizaciones suspendidas responden `403 tenant_suspended`.
+- El panel global usa permisos de plataforma; `BILLING_OPERATOR_USER_IDS` se mantiene por compatibilidad.
+- `/auth/me` incluye `platform` y el estado de cada empresa; `/auth/permissions` incluye `provider_id`.
+
 ### Documentación
 - `docs/PUESTA_EN_MARCHA.md`: pasos para correo transaccional, webhook de Mercado Pago, revisión legal, backups,
   restauración y monitoreo externo.
