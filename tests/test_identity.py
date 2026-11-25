@@ -220,7 +220,7 @@ def test_me_and_members_include_names_scoped_to_membership(client):
     me = client.get("/api/v1/auth/me", headers=headers).json
     assert me["tenants"] == [a.json["tenant_id"]]
     assert me["tenant_details"] == [{"id": a.json["tenant_id"], "name": me["tenant_details"][0]["name"],
-                                     "slug": "names-a", "role": "owner"}]
+                                     "slug": "names-a", "role": "owner", "status": "active"}]
     members = client.get("/api/v1/memberships", headers={**headers, "X-Tenant-ID": str(a.json["tenant_id"])}).json
     assert [(m["email"], m["role_name"]) for m in members["items"]] == [("names-a@example.test", "owner")]
     other = client.get("/api/v1/memberships", headers={**headers, "X-Tenant-ID": str(b.json["tenant_id"])})

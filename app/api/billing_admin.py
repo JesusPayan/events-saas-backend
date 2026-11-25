@@ -4,7 +4,7 @@ Set BILLING_OPERATOR_USER_IDS on Flask config to explicit trusted user IDs.
 This is NOT a tenant permission and must not be assigned to tenant owners.
 """
 from functools import wraps
-from flask import Blueprint, current_app, g, jsonify, request
+from flask import Blueprint, g, jsonify, request
 from sqlalchemy import select
 from app.security import authenticate
 from app.extensions import db
@@ -16,17 +16,29 @@ from app.services.billing.subscription_admin_service import (
 bp = Blueprint('billing_admin', __name__)
 
 
-def operator_only(fn):
-    @wraps(fn)
-    @authenticate
-    def wrapped(*args, **kwargs):
-        allowed = current_app.config.get('BILLING_OPERATOR_USER_IDS', ())
-        if not isinstance(allowed, (tuple, list, set, frozenset)) or isinstance(g.user.id, bool):
-            return jsonify(error='forbidden'), 403
-        if g.user.id not in allowed:
-            return jsonify(error='forbidden'), 403
-        return fn(*args, **kwargs)
-    return wrapped
+def _platform_guard(*permissions):
+    """Permisos de plataforma (ROLES-01). Los IDs de BILLING_OPERATOR_USER_IDS
+    conservan planes, suscripciones e incidencias por compatibilidad."""
+    def outer(fn):
+        @wraps(fn)
+        @authenticate
+        def wrapped(*args, **kwargs):
+            if isinstance(g.user.id, bool):
+                return jsonify(error='forbidden'), 403
+            from app.services.platform_service import platform_permissions
+            if not platform_permissions(g.user.id).intersection(permissions):
+                return jsonify(error='forbidden'), 403
+            return fn(*args, **kwargs)
+        return wrapped
+    return outer
+
+
+# Suscripciones, pagos e incidencias: dueño y administradores de plataforma.
+operator_only = _platform_guard('platform.billing.operate')
+# Precios de planes: solo el dueño de plataforma (y operadores heredados).
+plans_manager_only = _platform_guard('platform.plans.manage')
+# Panel global: cualquiera de los dos.
+any_operator = _platform_guard('platform.billing.operate', 'platform.plans.manage')
 
 
 def _json():

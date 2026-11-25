@@ -33,6 +33,7 @@ OWNER_PERMISSIONS = (
     "inventory.charges.approve", "inventory.charges.pay",
     "quotes.create", "quotes.read",
     "contracts.create", "contracts.read", "contracts.update",
+    "catalog.read", "catalog.manage",
 )
 
 ROLE_TEMPLATES = {
@@ -46,10 +47,14 @@ ROLE_TEMPLATES = {
         "inventory.read", "inventory.create", "inventory.update", "inventory.adjust",
         "quotes.create", "quotes.read",
         "contracts.create", "contracts.read", "contracts.update",
+        "catalog.read", "catalog.manage",
     ),
     "viewer": (
         "tenant.read", "clients.read", "events.read", "inventory.read", "quotes.read", "contracts.read",
+        "catalog.read",
     ),
+    # CAT-01: proveedor externo; solo ve y confirma sus propias partidas.
+    "provider": ("tenant.read", "provider.items"),
 }
 ASSIGNABLE_ROLES = frozenset(ROLE_TEMPLATES)
 _EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
@@ -74,19 +79,34 @@ def _permission(code):
     return permission
 
 
+def _sync_role(tenant_id, role_name, codes):
+    """Crea el rol si falta y agrega los permisos de la plantilla que le falten
+    (solo agrega: nunca retira permisos de un rol existente)."""
+    role = db.session.scalar(select(Role).where(Role.tenant_id == tenant_id, Role.name == role_name))
+    if role is None:
+        role = Role(tenant_id=tenant_id, name=role_name)
+        db.session.add(role)
+        db.session.flush()
+    current = set(db.session.scalars(select(Permission.code).join(
+        RolePermission, RolePermission.permission_id == Permission.id).where(
+        RolePermission.role_id == role.id)).all())
+    for code in codes:
+        if code not in current:
+            db.session.add(RolePermission(role_id=role.id, permission_id=_permission(code).id))
+    db.session.flush()
+    return role
+
+
 def ensure_role(tenant_id, role_key):
     """Devuelve el rol plantilla de la empresa, creándolo con sus permisos si falta."""
     if role_key not in ASSIGNABLE_ROLES:
         raise MembersError("invalid_role", 422)
-    role = db.session.scalar(select(Role).where(Role.tenant_id == tenant_id, Role.name == role_key))
-    if role is None:
-        role = Role(tenant_id=tenant_id, name=role_key)
-        db.session.add(role)
-        db.session.flush()
-        for code in ROLE_TEMPLATES[role_key]:
-            db.session.add(RolePermission(role_id=role.id, permission_id=_permission(code).id))
-        db.session.flush()
-    return role
+    return _sync_role(tenant_id, role_key, ROLE_TEMPLATES[role_key])
+
+
+def ensure_owner_role(tenant_id):
+    """Rol propietario (no asignable desde la gestión de miembros)."""
+    return _sync_role(tenant_id, "owner", OWNER_PERMISSIONS)
 
 
 def _normalize_email(email):
@@ -123,16 +143,33 @@ def _check_member_limit(tenant_id, *, extra_pending=True):
 def invitation_dict(inv):
     return {
         "id": inv.id, "email": inv.email, "role": inv.role_key, "status": inv.status,
+        "provider_id": inv.provider_id,
         "expired": inv.status == "pending" and inv.expires_at <= now(),
         "created_at": inv.created_at.isoformat() if inv.created_at else None,
         "expires_at": inv.expires_at.isoformat() if inv.expires_at else None,
     }
 
 
-def create_invitation(tenant_id, actor_id, email, role_key):
+def _provider_for_role(tenant_id, role_key, provider_id):
+    if role_key != "provider":
+        if provider_id is not None:
+            raise MembersError("provider_only_for_provider_role", 422)
+        return None
+    from app.models.catalog import Provider
+    if isinstance(provider_id, bool) or not isinstance(provider_id, int) or provider_id <= 0:
+        raise MembersError("provider_required", 422)
+    provider = db.session.scalar(select(Provider).where(
+        Provider.id == provider_id, Provider.tenant_id == tenant_id, Provider.status == "active"))
+    if provider is None:
+        raise MembersError("provider_not_found", 404)
+    return provider.id
+
+
+def create_invitation(tenant_id, actor_id, email, role_key, provider_id=None):
     email = _normalize_email(email)
     if role_key not in ASSIGNABLE_ROLES:
         raise MembersError("invalid_role", 422)
+    provider_id = _provider_for_role(tenant_id, role_key, provider_id)
     # Serializa invitaciones concurrentes de la misma empresa (límite del plan).
     db.session.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update())
     existing_user = db.session.scalar(select(User).where(User.email == email))
@@ -151,10 +188,14 @@ def create_invitation(tenant_id, actor_id, email, role_key):
     _check_member_limit(tenant_id)
     token = secrets.token_urlsafe(32)
     days = int(current_app.config.get("INVITATION_TTL_DAYS", 7))
-    inv = TenantInvitation(tenant_id=tenant_id, email=email, role_key=role_key, token_hash=_token_hash(token),
+    inv = TenantInvitation(tenant_id=tenant_id, email=email, role_key=role_key, provider_id=provider_id,
+                           token_hash=_token_hash(token),
                            status="pending", invited_by=actor_id, created_at=now(),
                            expires_at=now() + timedelta(days=days))
     db.session.add(inv)
+    db.session.flush()
+    _audit(actor_id, "member.invite", tenant_id, "invitation", inv.id,
+           {"email": email, "role": role_key, "provider_id": provider_id})
     db.session.commit()
     return inv, token
 
@@ -214,8 +255,12 @@ def accept_invitation(token, password):
                     Membership.tenant_id == inv.tenant_id, Membership.user_id == user.id)):
                 raise MembersError("already_member", 409)
         _check_member_limit(inv.tenant_id, extra_pending=False)
-        role = ensure_role(inv.tenant_id, inv.role_key)
-        db.session.add(Membership(tenant_id=inv.tenant_id, user_id=user.id, role_id=role.id, status="active"))
+        # «owner» solo llega aquí desde el alta de organización hecha por la plataforma.
+        role = (ensure_owner_role(inv.tenant_id) if inv.role_key == "owner"
+                else ensure_role(inv.tenant_id, inv.role_key))
+        db.session.add(Membership(tenant_id=inv.tenant_id, user_id=user.id, role_id=role.id, status="active",
+                                  provider_id=inv.provider_id if inv.role_key == "provider" else None))
+        _audit(user.id, "member.join", inv.tenant_id, "invitation", inv.id, {"role": inv.role_key})
         inv.status, inv.accepted_at, inv.accepted_user_id = "accepted", now(), user.id
         db.session.commit()
         return {"accepted": True, "tenant_id": inv.tenant_id, "email": user.email}
@@ -240,9 +285,23 @@ def _target_membership(tenant_id, membership_id, actor_id):
     return member
 
 
-def change_role(tenant_id, membership_id, actor_id, role_key):
+def _audit(actor_id, action, tenant_id, target_type, target_id, details):
+    from app.services.platform_service import record_audit
+    record_audit(actor_id, action, tenant_id=tenant_id, target_type=target_type,
+                 target_id=target_id, details=details)
+
+
+def change_role(tenant_id, membership_id, actor_id, role_key, provider_id=None):
     member = _target_membership(tenant_id, membership_id, actor_id)
+    if role_key not in ASSIGNABLE_ROLES:
+        raise MembersError("invalid_role", 422)
+    provider_id = _provider_for_role(tenant_id, role_key, provider_id)
+    previous = db.session.get(Role, member.role_id)
     member.role_id = ensure_role(tenant_id, role_key).id
+    member.provider_id = provider_id
+    _audit(actor_id, "member.role_change", tenant_id, "membership", member.id,
+           {"user_id": member.user_id, "from": previous.name if previous else None, "to": role_key,
+            "provider_id": provider_id})
     db.session.commit()
     return member
 
@@ -255,5 +314,7 @@ def set_member_status(tenant_id, membership_id, actor_id, active):
     if active:
         _check_member_limit(tenant_id, extra_pending=False)
     member.status = desired
+    _audit(actor_id, "member.activate" if active else "member.deactivate", tenant_id, "membership",
+           member.id, {"user_id": member.user_id})
     db.session.commit()
     return member
