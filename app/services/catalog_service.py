@@ -293,6 +293,7 @@ def offer_dict(o, *, categories=None, providers=None):
         "daily_capacity": o.daily_capacity, "requires_provider_confirmation": o.requires_provider_confirmation,
         "venue_restrictions": o.venue_restrictions, "required_documents": o.required_documents,
         "requires_special_permits": bool(category and _effective_flags(category)[1]),
+        "shared": bool(o.shared),
     }
 
 
@@ -310,7 +311,7 @@ def save_offer(tenant_id, actor_id, body, offer_id=None):
         "name", "description", "category_id", "provider_id", "status", "pricing_mode", "unit_price",
         "fulfillment_type", "inventory_item_id", "duration_hours", "min_guests", "max_guests", "coverage",
         "min_notice_days", "setup_requirements", "daily_capacity", "requires_provider_confirmation",
-        "venue_restrictions", "required_documents",
+        "venue_restrictions", "required_documents", "shared",
     })
     if offer_id is not None:
         offer = db.session.scalar(select(CatalogOffer).where(
@@ -369,6 +370,10 @@ def save_offer(tenant_id, actor_id, body, offer_id=None):
         if hours is not None and not Decimal("0.25") <= hours <= Decimal("240"):
             raise CatalogError("invalid_duration_hours", 422)
         offer.duration_hours = hours
+    if "shared" in body:
+        if not isinstance(body["shared"], bool):
+            raise CatalogError("invalid_shared", 422)
+        offer.shared = body["shared"]
     if "requires_provider_confirmation" in body:
         if not isinstance(body["requires_provider_confirmation"], bool):
             raise CatalogError("invalid_requires_provider_confirmation", 422)
@@ -539,6 +544,7 @@ def build_offer_item(tenant_id, offer_id, event_id, item, index):
 
 ITEM_BLOCKING = {
     "price_pending": lambda i: i.price_status == "pending",
+    "cost_pending": lambda i: getattr(i, "cost_status", None) == "pending",
     "confirmation_pending": lambda i: i.fulfillment_status in ("pending_confirmation", "unavailable"),
     "compliance_pending": lambda i: i.compliance_status == "pending",
 }
@@ -548,3 +554,89 @@ def pending_summary(items):
     summary = {key: sum(1 for i in items if check(i)) for key, check in ITEM_BLOCKING.items()}
     summary["blocking"] = sum(1 for i in items if any(check(i) for check in ITEM_BLOCKING.values()))
     return summary
+
+
+
+# ----------------------------------------------------------------------------
+# NET-01: catálogo compartido entre organizaciones
+# ----------------------------------------------------------------------------
+
+def _network_offers_query():
+    from app.models import Tenant
+    return (select(CatalogOffer, Tenant)
+            .join(Tenant, Tenant.id == CatalogOffer.tenant_id)
+            .where(CatalogOffer.shared.is_(True), CatalogOffer.status == "published",
+                   Tenant.status == "active"))
+
+
+def network_offer_dict(offer, tenant, categories):
+    data = offer_dict(offer, categories=categories)
+    # Proveedor = la organización que comparte; sus proveedores internos no se exponen.
+    data.update(kind="network", provider_id=None, provider_name=None, supplier_tenant_id=tenant.id,
+                supplier_name=tenant.name, inventory_item_id=None, daily_capacity=None,
+                # El precio publicado es el costo para quien cotiza.
+                cost_unit_price=data["unit_price"])
+    return data
+
+
+def list_network(tenant_id, *, category_id=None, search=None, page=1, per_page=50):
+    """Ofertas compartidas y publicadas de las demás organizaciones activas."""
+    categories = {c.id: c for c in db.session.scalars(select(CatalogCategory)).all()}
+    query = _network_offers_query().where(CatalogOffer.tenant_id != tenant_id).order_by(CatalogOffer.name)
+    if category_id is not None:
+        wanted = {cid for cid, c in categories.items() if cid == category_id or c.parent_id == category_id}
+        query = query.where(CatalogOffer.category_id.in_(wanted))
+    if search:
+        like = f"%{search.strip()}%"
+        from app.models import Tenant
+        query = query.where(or_(CatalogOffer.name.like(like), CatalogOffer.description.like(like),
+                                Tenant.name.like(like)))
+    rows = db.session.execute(query.limit(500)).all()
+    items = [network_offer_dict(o, t, categories) for o, t in rows]
+    start = (page - 1) * per_page
+    return len(items), items[start:start + per_page]
+
+
+def build_network_item(tenant_id, network_offer_id, item, index):
+    """Partida que presta otra organización. Siempre requiere su confirmación."""
+    if isinstance(network_offer_id, bool) or not isinstance(network_offer_id, int) or network_offer_id <= 0:
+        raise CatalogError("invalid_network_offer_id", 422)
+    row = db.session.execute(_network_offers_query().where(CatalogOffer.id == network_offer_id)).first()
+    if row is None or row[0].tenant_id == tenant_id:
+        raise CatalogError("network_offer_not_found", 404, item=index)
+    offer, supplier = row
+    category = db.session.get(CatalogCategory, offer.category_id)
+    _, special = _effective_flags(category)
+    cost_pending = offer.pricing_mode == "quote"
+    details = {}
+    for field in ("guests", "hours"):
+        value = item.get(field)
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                raise CatalogError(f"items[{index}].{field}", 422)
+            details[field] = str(value)
+    note = item.get("service_notes")
+    if note is not None:
+        if not isinstance(note, str) or len(note) > 1000:
+            raise CatalogError(f"items[{index}].service_notes", 422)
+        details["notes"] = note.strip()
+    if offer.venue_restrictions:
+        details["venue_restrictions"] = offer.venue_restrictions
+    if offer.required_documents:
+        details["required_documents"] = offer.required_documents
+    return {
+        "item_type": "service", "inventory_item_id": None,
+        "offer_id": None, "provider_id": None, "category_id": offer.category_id,
+        "pricing_mode": offer.pricing_mode,
+        "supplier_tenant_id": supplier.id, "network_offer_id": offer.id,
+        "cost_unit_price": None if cost_pending else offer.unit_price,
+        "cost_status": "pending" if cost_pending else "confirmed",
+        # La fecha la confirma la organización proveedora.
+        "fulfillment_status": "pending_confirmation",
+        "compliance_status": "pending" if (special or offer.venue_restrictions or offer.required_documents)
+        else "not_required",
+        "service_details": details or None,
+        "default_description": offer.name,
+        "default_unit_price": offer.unit_price,
+        "supplier_name": supplier.name,
+    }

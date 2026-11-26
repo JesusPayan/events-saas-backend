@@ -132,3 +132,38 @@ def update_my_provider_item(item_id):
         return jsonify(error="validation_error", details=exc.details), exc.status_code
     items = [i for i in provider_items(g.tenant_id, provider_id, per_page=500) if i["id"] == item_id]
     return jsonify(item=items[0] if items else None), 200
+
+
+# ----------------------------------------------------------------------------
+# NET-01: catálogo compartido entre organizaciones
+# ----------------------------------------------------------------------------
+
+@bp.get("/catalog/network")
+@tenant_permission("catalog.read")
+def network_catalog():
+    page = max(request.args.get("page", 1, type=int) or 1, 1)
+    per_page = min(max(request.args.get("per_page", 50, type=int) or 50, 1), 200)
+    total, items = svc.list_network(g.tenant_id, category_id=request.args.get("category_id", type=int),
+                                    search=request.args.get("search"), page=page, per_page=per_page)
+    return jsonify(items=items, total=total, page=page, per_page=per_page), 200
+
+
+@bp.get("/network/requests")
+@tenant_permission("catalog.read")
+def list_network_requests():
+    """Partidas que otras organizaciones solicitaron a esta organización."""
+    from app.services.quote_service import network_requests
+    return jsonify(items=network_requests(g.tenant_id)), 200
+
+
+@bp.patch("/network/requests/<int:item_id>")
+@tenant_permission("catalog.manage")
+def respond_network_request(item_id):
+    from app.services.quote_service import update_network_request
+    try:
+        item = update_network_request(g.tenant_id, item_id, g.user.id, request.get_json(silent=True))
+        db.session.commit()
+    except QuoteValidationError as exc:
+        db.session.rollback()
+        return jsonify(error="validation_error", details=exc.details), exc.status_code
+    return jsonify(item=item), 200

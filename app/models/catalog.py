@@ -80,6 +80,8 @@ class CatalogOffer(db.Model):
     requires_provider_confirmation = db.Column(db.Boolean, nullable=False, default=False)
     venue_restrictions = db.Column(db.String(1000), nullable=True)
     required_documents = db.Column(db.String(1000), nullable=True)
+    # NET-01: visible en el catálogo de la red para otras organizaciones (solo si está publicada).
+    shared = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     created_by = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=now)
     updated_at = db.Column(db.DateTime, nullable=False, default=now, onupdate=now)
@@ -103,4 +105,5 @@ class CatalogOffer(db.Model):
             name="ck_catalog_offers_inventory_link"),
         db.Index("ix_catalog_offers_tenant_category", "tenant_id", "category_id"),
         db.Index("ix_catalog_offers_tenant_status", "tenant_id", "status"),
+        db.Index("ix_catalog_offers_shared_status", "shared", "status"),
     )

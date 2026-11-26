@@ -30,6 +30,12 @@ def serialize_item(item, names=None):
         "fulfillment_status": item.fulfillment_status,
         "compliance_status": item.compliance_status,
         "service_details": item.service_details,
+        # NET-01: partida de otra organización (costo del proveedor y margen).
+        "supplier_tenant_id": item.supplier_tenant_id,
+        "supplier_name": names.get(("tenant", item.supplier_tenant_id)),
+        "network_offer_id": item.network_offer_id,
+        "cost_unit_price": str(item.cost_unit_price) if item.cost_unit_price is not None else None,
+        "cost_status": item.cost_status,
         "id": item.id,
         "inventory_item_id": item.inventory_item_id,
         "item_type": item.item_type,
@@ -106,6 +112,11 @@ def _item_names(tenant_id, items):
         for c in db.session.scalars(select(CatalogCategory).where(
                 CatalogCategory.id.in_(category_ids))).all():
             names[("category", c.id)] = c.name
+    supplier_ids = {i.supplier_tenant_id for i in items if getattr(i, "supplier_tenant_id", None)}
+    if supplier_ids:
+        from app.models import Tenant
+        for t in db.session.scalars(select(Tenant).where(Tenant.id.in_(supplier_ids))).all():
+            names[("tenant", t.id)] = t.name
     return names
 
 
@@ -199,6 +210,19 @@ def create_quote(tenant_id, user_id, data):
 
     db.session.flush()
     quote_id = quote.id
+
+    # NET-01: queda registro de qué organización recibe datos del evento y del cliente.
+    suppliers = {}
+    for item_data in items:
+        if item_data.get("supplier_tenant_id"):
+            suppliers.setdefault(item_data["supplier_tenant_id"], []).append(item_data["network_offer_id"])
+    if suppliers:
+        from app.services.platform_service import record_audit
+        for supplier_id, offer_ids in suppliers.items():
+            record_audit(user_id, "network_request.create", tenant_id=tenant_id, target_type="quote",
+                         target_id=quote_id, details={"supplier_tenant_id": supplier_id,
+                                                      "network_offer_ids": offer_ids,
+                                                      "shared_data": ["event", "client"]})
 
     # La transacción se confirma en la ruta.
     return quote_id
@@ -328,7 +352,7 @@ FULFILLMENT_UPDATES = ("pending_confirmation", "confirmed", "unavailable")
 COMPLIANCE_UPDATES = ("pending", "approved")
 
 
-def update_quote_item(tenant_id, quote_id, item_id, user_id, data, *, provider_id=None):
+def update_quote_item(tenant_id, quote_id, item_id, user_id, data, *, provider_id=None, _as_supplier=False):
     """Registra el importe acordado, la confirmación del proveedor o la revisión
     de restricciones/documentos de una partida.
 
@@ -373,6 +397,9 @@ def update_quote_item(tenant_id, quote_id, item_id, user_id, data, *, provider_i
         item.price_status = "confirmed"
         changes["unit_price"] = str(calculated["unit_price"])
     if "fulfillment_status" in data:
+        if item.supplier_tenant_id is not None and provider_id is None and not _as_supplier:
+            # NET-01: la fecha la confirma la organización que presta el servicio.
+            raise QuoteValidationError({"fulfillment_status": "supplier_only"}, 403)
         if item.fulfillment_status == "not_required" or data["fulfillment_status"] not in FULFILLMENT_UPDATES:
             raise QuoteValidationError({"fulfillment_status": "invalid_status"}, 422)
         item.fulfillment_status = data["fulfillment_status"]
@@ -418,3 +445,113 @@ def provider_items(tenant_id, provider_id, *, page=1, per_page=50):
         "event_starts_at": event.starts_at.isoformat() + "Z" if event.starts_at else None,
         "event_location": event.location, "estimated_guests": event.estimated_guests,
     } for item, quote, event in rows]
+
+
+
+# ----------------------------------------------------------------------------
+# NET-01: solicitudes recibidas por la organización proveedora
+# ----------------------------------------------------------------------------
+
+def _request_dict(item, quote, event, client, requester, names):
+    cost_total = (money(item.cost_unit_price * item.quantity)
+                  if item.cost_unit_price is not None else None)
+    return {
+        "id": item.id, "description": item.description, "quantity": str(item.quantity),
+        "pricing_mode": item.pricing_mode, "category_name": names.get(("category", item.category_id)),
+        "network_offer_id": item.network_offer_id,
+        "cost_unit_price": str(item.cost_unit_price) if item.cost_unit_price is not None else None,
+        "cost_total": str(cost_total) if cost_total is not None else None,
+        "cost_status": item.cost_status, "fulfillment_status": item.fulfillment_status,
+        "compliance_status": item.compliance_status, "service_details": item.service_details,
+        "quote_number": quote.quote_number, "quote_status": quote.status,
+        "requester_tenant_id": requester.id, "requester_name": requester.name,
+        "event_name": event.name,
+        "event_starts_at": event.starts_at.isoformat() + "Z" if event.starts_at else None,
+        "event_ends_at": event.ends_at.isoformat() + "Z" if event.ends_at else None,
+        "event_location": event.location, "estimated_guests": event.estimated_guests,
+        # Decisión del negocio: la organización proveedora ve también al cliente final.
+        "client": {
+            "name": " ".join(p for p in (client.first_name, client.last_name) if p) or None,
+            "business_name": client.business_name, "email": client.email, "phone": client.phone,
+            "whatsapp": client.whatsapp,
+        },
+    }
+
+
+def _network_rows(supplier_tenant_id, item_id=None):
+    from app.models import Tenant
+    from app.models.crm import Client
+    from app.models.event import Event
+    query = (select(QuoteItem, Quote, Event, Client, Tenant)
+             .join(Quote, (Quote.id == QuoteItem.quote_id) & (Quote.tenant_id == QuoteItem.tenant_id))
+             .join(Event, (Event.id == Quote.event_id) & (Event.tenant_id == Quote.tenant_id))
+             .join(Client, (Client.id == Quote.client_id) & (Client.tenant_id == Quote.tenant_id))
+             .join(Tenant, Tenant.id == Quote.tenant_id)
+             .where(QuoteItem.supplier_tenant_id == supplier_tenant_id)
+             .order_by(Event.starts_at.desc(), QuoteItem.id))
+    if item_id is not None:
+        query = query.where(QuoteItem.id == item_id)
+    return db.session.execute(query.limit(200)).all()
+
+
+def network_requests(supplier_tenant_id):
+    rows = _network_rows(supplier_tenant_id)
+    names = _item_names(None, [r[0] for r in rows])
+    return [_request_dict(*row, names) for row in rows]
+
+
+def update_network_request(supplier_tenant_id, item_id, user_id, data):
+    """La organización proveedora registra su costo y confirma (o rechaza) la fecha."""
+    if not isinstance(data, dict):
+        raise QuoteValidationError({"body": "invalid_json"})
+    unknown = set(data) - {"cost_unit_price", "fulfillment_status", "notes"}
+    if unknown or not data:
+        raise QuoteValidationError({"fields": sorted(unknown) or "required"}, 422)
+    row = db.session.execute(select(QuoteItem.tenant_id, QuoteItem.quote_id).where(
+        QuoteItem.id == item_id, QuoteItem.supplier_tenant_id == supplier_tenant_id)).first()
+    if row is None:
+        raise QuoteValidationError({"item": "not_found"}, 404)
+    requester_id, quote_id = row
+    quote = db.session.scalar(select(Quote).where(
+        Quote.id == quote_id, Quote.tenant_id == requester_id).with_for_update())
+    item = next(i for i in quote.items if i.id == item_id)
+    if quote.status not in EDITABLE_QUOTE_STATUSES:
+        raise QuoteValidationError({"quote": "not_editable", "status": quote.status}, 409)
+    changes = {}
+    if "cost_unit_price" in data:
+        raw = data["cost_unit_price"]
+        try:
+            cost = Decimal(str(raw))
+        except Exception:
+            raise QuoteValidationError({"cost_unit_price": "invalid_amount"}, 422)
+        if isinstance(raw, bool) or not cost.is_finite() or cost < 0 or cost != cost.quantize(Decimal("0.01")) \
+                or cost > Decimal("999999999999.99"):
+            raise QuoteValidationError({"cost_unit_price": "invalid_amount"}, 422)
+        item.cost_unit_price, item.cost_status = cost, "confirmed"
+        changes["cost_unit_price"] = str(cost)
+    if "fulfillment_status" in data:
+        if data["fulfillment_status"] not in FULFILLMENT_UPDATES:
+            raise QuoteValidationError({"fulfillment_status": "invalid_status"}, 422)
+        item.fulfillment_status = data["fulfillment_status"]
+        changes["fulfillment_status"] = item.fulfillment_status
+    notes = data.get("notes")
+    if notes is not None and (not isinstance(notes, str) or len(notes) > 1000):
+        raise QuoteValidationError({"notes": "invalid_notes"}, 422)
+    db.session.add(QuoteStatusHistory(
+        tenant_id=requester_id, quote_id=quote.id, previous_status=quote.status, new_status=quote.status,
+        changed_by=user_id,
+        notes=(f"Proveedor de la red, partida {item.id}: "
+               + ", ".join(f"{k}={v}" for k, v in changes.items())
+               + (f". {notes.strip()}" if notes and notes.strip() else ""))[:2000],
+    ))
+    from app.services.platform_service import record_audit
+    record_audit(user_id, "network_request.respond", tenant_id=supplier_tenant_id, target_type="quote_item",
+                 target_id=item.id, details={"requester_tenant_id": requester_id, **changes})
+    db.session.flush()
+    return network_requests_item(supplier_tenant_id, item_id)
+
+
+def network_requests_item(supplier_tenant_id, item_id):
+    rows = _network_rows(supplier_tenant_id, item_id)
+    names = _item_names(None, [r[0] for r in rows])
+    return _request_dict(*rows[0], names) if rows else None
