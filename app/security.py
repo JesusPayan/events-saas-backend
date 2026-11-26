@@ -65,7 +65,27 @@ def authenticate(fn):
         return fn(*args, **kwargs)
     return inner
 
+# Permisos que concede un acceso delegado (solo lectura). Lista cerrada: aunque se
+# agreguen permisos nuevos al sistema, el acceso delegado no los hereda.
+DELEGATED_READ_PERMISSIONS = frozenset({
+    "tenant.read", "clients.read", "events.read", "inventory.read",
+    "quotes.read", "contracts.read", "catalog.read",
+})
+
+
+def _role_allows(role_id, permission):
+    return db.session.scalar(select(Permission.id).join(
+        RolePermission, RolePermission.permission_id == Permission.id).where(
+        RolePermission.role_id == role_id, Permission.code == permission)) is not None
+
+
 def tenant_permission(permission):
+    """Valida usuario, organización (X-Tenant-ID) y permiso en cada operación.
+
+    - La organización debe estar activa (las suspendidas responden 403).
+    - Sin membresía, se acepta un acceso delegado vigente solo para permisos de
+      lectura; cada uso queda en la bitácora de auditoría.
+    """
     def outer(fn):
         @wraps(fn)
         @authenticate
@@ -78,14 +98,42 @@ def tenant_permission(permission):
                 Membership.tenant_id == tenant_id,
                 Membership.user_id == g.user.id,
                 Membership.status == 'active'))
-            if not membership:
-                return jsonify(error='forbidden'), 403
-            allowed = db.session.scalar(select(Permission.id).join(RolePermission, RolePermission.permission_id == Permission.id).where(
-                RolePermission.role_id == membership.role_id, Permission.code == permission))
-            if allowed is None:
-                return jsonify(error='forbidden'), 403
+            grant = None
+            if membership is not None:
+                if not _role_allows(membership.role_id, permission):
+                    return jsonify(error='forbidden'), 403
+            else:
+                from app.services.platform_service import active_grant, record_audit
+                grant = active_grant(tenant_id, g.user.id)
+                if grant is None or permission not in DELEGATED_READ_PERMISSIONS:
+                    return jsonify(error='forbidden'), 403
+            tenant_status = db.session.scalar(select(Tenant.status).where(Tenant.id == tenant_id))
+            if tenant_status != 'active':
+                return jsonify(error='tenant_suspended'), 403
             g.tenant_id = tenant_id
             g.membership = membership
+            g.access_grant = grant
+            if grant is not None:
+                record_audit(g.user.id, 'delegated_access.use', tenant_id=tenant_id,
+                             target_type='access_grant', target_id=grant.id,
+                             details={'method': request.method, 'path': request.path,
+                                      'permission': permission}, commit=True)
+            return fn(*args, **kwargs)
+        return inner
+    return outer
+
+
+def platform_permission(*permissions):
+    """Exige al menos uno de los permisos de plataforma indicados (alcance global)."""
+    def outer(fn):
+        @wraps(fn)
+        @authenticate
+        def inner(*args, **kwargs):
+            from app.services.platform_service import platform_permissions
+            granted = platform_permissions(g.user.id)
+            if not granted.intersection(permissions):
+                return jsonify(error='forbidden'), 403
+            g.platform_permissions = granted
             return fn(*args, **kwargs)
         return inner
     return outer

@@ -355,6 +355,11 @@ def create_app(config_override=None):
     )
     from app.api.billing_prices_admin import bp as billing_prices_admin_bp
     app.register_blueprint(billing_prices_admin_bp, url_prefix='/api/v1')
+    # ROLES-01 / CAT-01
+    from app.api.platform import bp as platform_bp
+    from app.api.catalog import bp as catalog_bp
+    app.register_blueprint(platform_bp, url_prefix='/api/v1')
+    app.register_blueprint(catalog_bp, url_prefix='/api/v1')
     # ==============================================
     # 10. INICIALIZAR EXTENSIONES
     # ==============================================

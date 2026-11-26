@@ -18,7 +18,8 @@ from app.services.members_service import (
 bp = Blueprint("members", __name__)
 logger = logging.getLogger(__name__)
 
-ROLE_NAMES = {"admin": "Administrador", "staff": "Operativo", "viewer": "Solo lectura"}
+ROLE_NAMES = {"owner": "Propietario", "admin": "Administrador", "staff": "Operativo", "viewer": "Solo lectura",
+              "provider": "Proveedor"}
 
 
 def _error(exc):
@@ -44,10 +45,11 @@ def list_invitations():
 @tenant_permission("members.manage")
 def invite():
     body = request.get_json(silent=True)
-    if not isinstance(body, dict) or set(body) != {"email", "role"}:
+    if not isinstance(body, dict) or not {"email", "role"} <= set(body) <= {"email", "role", "provider_id"}:
         return jsonify(error="invalid_fields"), 422
     try:
-        inv, token = create_invitation(g.tenant_id, g.user.id, body["email"], body["role"])
+        inv, token = create_invitation(g.tenant_id, g.user.id, body["email"], body["role"],
+                                       body.get("provider_id"))
     except MembersError as exc:
         db.session.rollback()
         return _error(exc)
@@ -109,11 +111,12 @@ def accept():
 @tenant_permission("members.manage")
 def update_role(membership_id):
     body = request.get_json(silent=True)
-    if not isinstance(body, dict) or set(body) != {"role"}:
+    if not isinstance(body, dict) or not {"role"} <= set(body) <= {"role", "provider_id"}:
         return jsonify(error="invalid_fields"), 422
     try:
-        member = change_role(g.tenant_id, membership_id, g.user.id, body["role"])
-        return jsonify(id=member.id, role=body["role"], status=member.status), 200
+        member = change_role(g.tenant_id, membership_id, g.user.id, body["role"], body.get("provider_id"))
+        return jsonify(id=member.id, role=body["role"], status=member.status,
+                       provider_id=member.provider_id), 200
     except MembersError as exc:
         db.session.rollback()
         return _error(exc)

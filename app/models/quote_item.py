@@ -6,7 +6,7 @@ from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint
 class QuoteItem(db.Model):
     __tablename__ = "quote_items"
 
-    id = db.Column(db.BigInteger, primary_key=True, autoincrement=True)
+    id = db.Column(db.BigInteger().with_variant(db.Integer, "sqlite"), primary_key=True, autoincrement=True)
     tenant_id = db.Column(db.BigInteger, nullable=False)
     quote_id = db.Column(db.BigInteger, nullable=False)
 
@@ -24,6 +24,27 @@ class QuoteItem(db.Model):
     total = db.Column(db.Numeric(14, 2), nullable=False, default=0)
 
     sort_order = db.Column(db.Integer, nullable=False, default=0)
+
+    # CAT-01: partidas de servicios y ofertas del catálogo. Las partidas
+    # anteriores conservan los valores por defecto (precio confirmado y sin
+    # confirmación pendiente), así que sus importes no cambian.
+    offer_id = db.Column(db.BigInteger, nullable=True)
+    provider_id = db.Column(db.BigInteger, nullable=True)
+    category_id = db.Column(db.BigInteger, db.ForeignKey("catalog_categories.id"), nullable=True)
+    pricing_mode = db.Column(db.String(20), nullable=True)
+    price_status = db.Column(db.String(20), nullable=False, default="confirmed", server_default="confirmed")
+    fulfillment_status = db.Column(db.String(30), nullable=False, default="not_required",
+                                   server_default="not_required")
+    compliance_status = db.Column(db.String(20), nullable=False, default="not_required",
+                                  server_default="not_required")
+    service_details = db.Column(db.JSON, nullable=True)
+
+    # NET-01: partida que presta otra organización de la red. ``unit_price`` es el
+    # precio de venta al cliente; ``cost_unit_price`` es el precio del proveedor.
+    supplier_tenant_id = db.Column(db.BigInteger, db.ForeignKey("tenants.id"), nullable=True)
+    network_offer_id = db.Column(db.BigInteger, db.ForeignKey("catalog_offers.id"), nullable=True)
+    cost_unit_price = db.Column(db.Numeric(14, 2), nullable=True)
+    cost_status = db.Column(db.String(20), nullable=True)
 
     __table_args__ = (
         UniqueConstraint(
@@ -63,6 +84,45 @@ class QuoteItem(db.Model):
             name="ck_quote_items_inventory_type",
         ),
         db.Index("ix_quote_items_tenant_quote", "tenant_id", "quote_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "offer_id"],
+            ["catalog_offers.tenant_id", "catalog_offers.id"],
+            name="fk_quote_items_offer_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "provider_id"],
+            ["providers.tenant_id", "providers.id"],
+            name="fk_quote_items_provider_tenant",
+        ),
+        CheckConstraint(
+            "price_status IN ('confirmed', 'pending')",
+            name="ck_quote_items_price_status",
+        ),
+        CheckConstraint(
+            "fulfillment_status IN ('not_required', 'pending_confirmation', "
+            "'available', 'confirmed', 'unavailable')",
+            name="ck_quote_items_fulfillment_status",
+        ),
+        CheckConstraint(
+            "compliance_status IN ('not_required', 'pending', 'approved')",
+            name="ck_quote_items_compliance_status",
+        ),
+        db.Index("ix_quote_items_tenant_provider", "tenant_id", "provider_id"),
+        CheckConstraint(
+            "cost_status IS NULL OR cost_status IN ('confirmed', 'pending')",
+            name="ck_quote_items_cost_status",
+        ),
+        CheckConstraint(
+            "cost_unit_price IS NULL OR cost_unit_price >= 0",
+            name="ck_quote_items_cost_nonnegative",
+        ),
+        CheckConstraint(
+            "(supplier_tenant_id IS NULL AND network_offer_id IS NULL) "
+            "OR (supplier_tenant_id IS NOT NULL AND network_offer_id IS NOT NULL "
+            "AND supplier_tenant_id <> tenant_id AND item_type <> 'inventory')",
+            name="ck_quote_items_network",
+        ),
+        db.Index("ix_quote_items_supplier", "supplier_tenant_id"),
     )
 
     quote = db.relationship(

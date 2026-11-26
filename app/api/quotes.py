@@ -15,7 +15,8 @@ from app.services.quote_service import (
     get_quote,
     list_quotes,
     serialize_quote,
-    change_quote_status 
+    change_quote_status,
+    update_quote_item,
 )
 from app.services.quote_validation import QuoteValidationError
 
@@ -140,7 +141,23 @@ def change_quote_status_endpoint(quote_id):
     except Exception:
         db.session.rollback()
         raise
-    from flask import send_file
+
+
+@bp.patch("/quotes/<int:quote_id>/items/<int:item_id>")
+@tenant_permission("quotes.create")
+def update_quote_item_endpoint(quote_id, item_id):
+    """CAT-01: importe acordado, confirmación del proveedor y revisión documental."""
+    try:
+        quote, _ = update_quote_item(g.tenant_id, quote_id, item_id, g.user.id,
+                                     request.get_json(silent=True))
+        db.session.commit()
+    except QuoteValidationError as exc:
+        db.session.rollback()
+        return jsonify(error="validation_error", details=exc.details), exc.status_code
+    quote = get_quote(g.tenant_id, quote_id)
+    return jsonify(serialize_quote(quote, include_items=True)), 200
+
+
 @bp.get("/quotes/<int:quote_id>/pdf")
 @tenant_permission("quotes.read")
 def download_quote_pdf(quote_id):

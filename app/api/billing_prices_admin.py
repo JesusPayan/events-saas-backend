@@ -17,7 +17,7 @@ from app.models.billing import (
     BillingPlan, BillingPlanPrice, BillingPriceAudit, TenantSubscription, SubscriptionAudit,
 )
 from app.models.mercadopago import MPCheckout, MPPayment, MPReconciliationIssue
-from app.api.billing_admin import operator_only
+from app.api.billing_admin import any_operator, operator_only, plans_manager_only
 
 bp = Blueprint('billing_prices_admin', __name__)
 
@@ -44,7 +44,7 @@ def _page_args(default_size=25):
 
 
 @bp.get('/billing/admin/prices')
-@operator_only
+@plans_manager_only
 def list_prices():
     """Active prices per plan (``?history=1`` also returns inactive versions)."""
     include_history = request.args.get('history') in ('1', 'true')
@@ -68,7 +68,7 @@ def list_prices():
 
 
 @bp.get('/billing/admin/prices/audits')
-@operator_only
+@plans_manager_only
 def price_audits():
     page, size = _page_args()
     query = select(BillingPriceAudit)
@@ -103,7 +103,7 @@ def _parse_amount(raw):
 
 
 @bp.post('/billing/admin/prices/<int:price_id>/reprice')
-@operator_only
+@plans_manager_only
 def reprice(price_id):
     body = request.get_json(silent=True)
     if not isinstance(body, dict) or set(body) != {'amount'} or not isinstance(body['amount'], str):
@@ -179,13 +179,13 @@ def _set_active(price_id, active):
 
 
 @bp.post('/billing/admin/prices/<int:price_id>/activate')
-@operator_only
+@plans_manager_only
 def activate_price(price_id):
     return _set_active(price_id, True)
 
 
 @bp.post('/billing/admin/prices/<int:price_id>/deactivate')
-@operator_only
+@plans_manager_only
 def deactivate_price(price_id):
     return _set_active(price_id, False)
 
@@ -259,7 +259,7 @@ def reconciliation_issues():
 
 
 @bp.get('/billing/admin/me')
-@operator_only
+@any_operator
 def operator_me():
     """Lets the UI show the global panel only to configured operators."""
     return jsonify(operator=True, user_id=g.user.id), 200
