@@ -100,12 +100,34 @@ pendiente, así que sus importes y su flujo no cambian.
   fecha y registra el importe acordado. No puede aprobar la revisión documental ni ver la cotización completa.
 - El PDF muestra «Pendiente / Por cotizar» y el «Total confirmado».
 
+### Catálogo compartido entre organizaciones (NET-01, migración `c07000000001`)
+
+Reglas definidas por el negocio:
+
+- **Solo se comparte lo marcado:** cada oferta tiene «Compartir en el catálogo de la red» (`shared`, apagado por
+  defecto). La red muestra ofertas compartidas **y publicadas** de organizaciones **activas**, nunca las propias ni
+  los proveedores internos de quien comparte.
+- **Costo y precio de venta:** el precio publicado por la organización proveedora es el **costo** para quien cotiza.
+  La partida guarda `cost_unit_price` y el `unit_price` es el **precio de venta** que fija quien cotiza (por defecto,
+  el costo). El total de la cotización suma precios de venta; la organización proveedora nunca ve el precio de venta.
+  Si la oferta es «bajo cotización», el costo y el precio quedan pendientes y bloquean la aceptación.
+- **Datos compartidos:** la organización proveedora ve en **Solicitudes de la red** los datos del evento (nombre,
+  fechas, lugar, invitados) **y del cliente final** (nombre, razón social, correo, teléfono, WhatsApp), además de la
+  cantidad, sus notas y su costo. Cada solicitud queda en auditoría (`network_request.create` en la organización que
+  cotiza y `network_request.respond` en la proveedora).
+- **Confirmación:** las partidas de la red siempre empiezan «pendientes de confirmación». Solo la organización
+  proveedora confirma o rechaza la fecha y registra su costo (`PATCH /network/requests/{id}`, permiso
+  `catalog.manage`; lectura con `catalog.read`). Quien cotiza no puede confirmar por ella (`403 supplier_only`), pero
+  aprueba la revisión de recinto y documentos.
+- **Inventario de otra organización:** no se reserva automáticamente; la organización proveedora lo confirma y lo
+  gestiona en su propio inventario.
+- Los proveedores internos (sección anterior) se conservan.
+
 ## 3. Decisiones reversibles y supuestos
 
-1. **«Varios proveedores» = proveedores registrados por la organización** (subcontratistas), no un marketplace entre
-   organizaciones. Hoy el cliente es un registro del CRM, no un usuario; quien arma la solicitud es la organización.
-   Un portal para que el cliente final explore y solicite por sí mismo, o un catálogo compartido entre
-   organizaciones, cambiaría el modelo de aislamiento y requiere decisión del negocio.
+1. **Proveedores:** conviven los proveedores internos de cada organización (subcontratistas sin cuenta) y las
+   organizaciones de la red (catálogo compartido, NET-01). Un portal para que el cliente final solicite por sí mismo
+   sigue fuera de alcance.
 2. Categorías globales administradas por la plataforma; las organizaciones no crean categorías propias.
 3. El mapeo de permisos es conservador: `catalog.read` para todos los roles con lectura y `catalog.manage` para
    Propietario, Administrador y Operativo (los mismos que ya administraban inventario).
@@ -124,3 +146,6 @@ pendiente, así que sus importes y su flujo no cambian.
 | Ofertas del catálogo | Catálogo de servicios (`/catalog`) | Propietario, Administrador, Operativo |
 | Proveedores | Proveedores (`/providers`) | Propietario, Administrador, Operativo |
 | Partidas del proveedor | Proveedor → Mis partidas (`/provider/items`) | Usuario con rol Proveedor |
+| Compartir una oferta en la red | Catálogo de servicios → editar oferta → «Compartir en el catálogo de la red» | Propietario, Administrador, Operativo |
+| Explorar la red | Catálogo de servicios → «Catálogo de la red»; en la cotización, «Red de organizaciones» | Quien tenga `catalog.read` / crea cotizaciones |
+| Solicitudes recibidas | Solicitudes de la red (`/network/requests`) | Lectura `catalog.read`; responder `catalog.manage` |

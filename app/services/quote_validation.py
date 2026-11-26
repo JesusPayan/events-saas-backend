@@ -112,6 +112,8 @@ def validate_quote(data, tenant_id):
             "discount_amount", "tax_rate",
             # CAT-01: partidas del catálogo de servicios.
             "offer_id", "guests", "hours", "service_notes", "price_pending",
+            # NET-01: oferta compartida por otra organización.
+            "network_offer_id",
         }
 
         unknown = set(item) - allowed_item
@@ -126,8 +128,47 @@ def validate_quote(data, tenant_id):
             "pricing_mode": None, "price_status": "confirmed",
             "fulfillment_status": "not_required",
             "compliance_status": "not_required", "service_details": None,
+            "supplier_tenant_id": None, "network_offer_id": None,
+            "cost_unit_price": None, "cost_status": None,
         }
-        if item.get("offer_id") is not None:
+        if item.get("offer_id") is not None and item.get("network_offer_id") is not None:
+            raise QuoteValidationError({
+                f"items[{index}]": "offer_and_network_offer_are_exclusive"
+            })
+        if item.get("network_offer_id") is not None:
+            from app.services.catalog_service import CatalogError, build_network_item
+            try:
+                built = build_network_item(tenant_id, item["network_offer_id"], item, index)
+            except CatalogError as exc:
+                raise QuoteValidationError(
+                    {f"items[{index}].network_offer_id": exc.code},
+                    404 if exc.status == 404 else 400,
+                ) from exc
+            if item.get("item_type") not in (None, "service"):
+                raise QuoteValidationError({
+                    f"items[{index}].item_type": "network_items_are_services"
+                })
+            item = dict(item)
+            item["item_type"] = built.pop("item_type")
+            item["inventory_item_id"] = built.pop("inventory_item_id")
+            default_description = built.pop("default_description")
+            built.pop("default_unit_price")
+            supplier_name = built.pop("supplier_name")
+            if not item.get("description"):
+                item["description"] = f"{default_description} ({supplier_name})"[:500]
+            # Precio de venta: el que fija quien cotiza; si no lo indica, el costo.
+            if item.get("unit_price") is None:
+                if built["cost_unit_price"] is None:
+                    item["unit_price"] = "0"
+                    item["discount_amount"] = "0"
+                    built["price_status"] = "pending"
+                else:
+                    item["unit_price"] = str(built["cost_unit_price"])
+                    built["price_status"] = "confirmed"
+            else:
+                built["price_status"] = "confirmed"
+            catalog_fields.update(built)
+        elif item.get("offer_id") is not None:
             from app.services.catalog_service import CatalogError, build_offer_item
             try:
                 built = build_offer_item(tenant_id, item["offer_id"], event_id, item, index)

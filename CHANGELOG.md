@@ -15,6 +15,9 @@ Los PR citados son del repositorio backend salvo que se indique `frontend#`.
   ofertas con modalidad de precio y tipo de confirmación, partidas mixtas en cotizaciones con precio pendiente fuera
   del total, portal del proveedor y bloqueo de aceptación con pendientes.
 - Migración aditiva `c06000000001` y script `scripts.grant_platform_owner`.
+- **Catálogo compartido entre organizaciones** (NET-01, migración `c07000000001`): ofertas compartidas por elección,
+  catálogo de la red, partidas de otra organización con costo y precio de venta, solicitudes recibidas con datos del
+  evento y del cliente, confirmación exclusiva de la organización proveedora y auditoría.
 
 ### Cambiado
 - Las organizaciones suspendidas responden `403 tenant_suspended`.

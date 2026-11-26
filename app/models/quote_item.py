@@ -39,6 +39,13 @@ class QuoteItem(db.Model):
                                   server_default="not_required")
     service_details = db.Column(db.JSON, nullable=True)
 
+    # NET-01: partida que presta otra organización de la red. ``unit_price`` es el
+    # precio de venta al cliente; ``cost_unit_price`` es el precio del proveedor.
+    supplier_tenant_id = db.Column(db.BigInteger, db.ForeignKey("tenants.id"), nullable=True)
+    network_offer_id = db.Column(db.BigInteger, db.ForeignKey("catalog_offers.id"), nullable=True)
+    cost_unit_price = db.Column(db.Numeric(14, 2), nullable=True)
+    cost_status = db.Column(db.String(20), nullable=True)
+
     __table_args__ = (
         UniqueConstraint(
             "tenant_id", "id",
@@ -101,6 +108,21 @@ class QuoteItem(db.Model):
             name="ck_quote_items_compliance_status",
         ),
         db.Index("ix_quote_items_tenant_provider", "tenant_id", "provider_id"),
+        CheckConstraint(
+            "cost_status IS NULL OR cost_status IN ('confirmed', 'pending')",
+            name="ck_quote_items_cost_status",
+        ),
+        CheckConstraint(
+            "cost_unit_price IS NULL OR cost_unit_price >= 0",
+            name="ck_quote_items_cost_nonnegative",
+        ),
+        CheckConstraint(
+            "(supplier_tenant_id IS NULL AND network_offer_id IS NULL) "
+            "OR (supplier_tenant_id IS NOT NULL AND network_offer_id IS NOT NULL "
+            "AND supplier_tenant_id <> tenant_id AND item_type <> 'inventory')",
+            name="ck_quote_items_network",
+        ),
+        db.Index("ix_quote_items_supplier", "supplier_tenant_id"),
     )
 
     quote = db.relationship(
