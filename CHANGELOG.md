@@ -6,6 +6,10 @@ Los PR citados son del repositorio backend salvo que se indique `frontend#`.
 
 ## [Sin publicar]
 
+### Seguridad
+- Dependencias actualizadas por vulnerabilidades conocidas (`pip-audit`): Flask 3.1.3, Werkzeug 3.1.9,
+  flask-cors 6.0.0, python-dotenv 1.2.2 y Pillow 13.0.0. `pip-audit` sin hallazgos.
+
 ### Añadido
 - **Roles administrativos con alcance** (ROLES-01): dueño y administrador de plataforma, promotor y roles reservados
   (soporte, finanzas, auditoría); transferencia de propiedad sin quedar sin dueño; alta y suspensión de
