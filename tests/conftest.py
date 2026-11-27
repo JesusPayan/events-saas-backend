@@ -320,3 +320,25 @@ def reconciliation_scenario(flask_app, test_context):
     }
 
     return scenario
+
+
+# ==========================================================
+# MOD-01: organizaciones de prueba con todos los módulos
+# ==========================================================
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "mod01: pruebas de MOD-01 con la configuración real de módulos")
+
+
+@pytest.fixture(autouse=True)
+def _pre_mod01_full_modules(request, monkeypatch):
+    """Las pruebas anteriores a MOD-01 asumen que una empresa recién registrada usa todos
+    los módulos (como en v1.2.0). Para ellas, la configuración inicial incluye todos los
+    módulos disponibles; la verificación de módulos en el servidor sigue activa.
+
+    Las pruebas marcadas con ``@pytest.mark.mod01`` usan la configuración real
+    (solo módulos comunes hasta completar el onboarding).
+    """
+    if request.node.get_closest_marker("mod01") is None:
+        from app.modules_registry import OPTIONAL_MODULES
+        monkeypatch.setattr("app.services.capability_service.DEFAULT_NEW_TENANT_MODULES", OPTIONAL_MODULES)

@@ -143,8 +143,12 @@ def update_my_provider_item(item_id):
 def network_catalog():
     page = max(request.args.get("page", 1, type=int) or 1, 1)
     per_page = min(max(request.args.get("per_page", 50, type=int) or 50, 1), 200)
+    business_type = request.args.get("business_type")
+    if business_type is not None and (len(business_type) > 40 or not business_type.replace("_", "").isalnum()):
+        return jsonify(error="invalid_business_type"), 422
     total, items = svc.list_network(g.tenant_id, category_id=request.args.get("category_id", type=int),
-                                    search=request.args.get("search"), page=page, per_page=per_page)
+                                    search=request.args.get("search"), page=page, per_page=per_page,
+                                    business_type=business_type)
     return jsonify(items=items, total=total, page=page, per_page=per_page), 200
 
 

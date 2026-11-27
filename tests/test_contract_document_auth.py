@@ -83,15 +83,22 @@ def mock_database(*, membership=True, permission=True, document=None):
             f"Consulta inesperada durante la prueba: {sql}"
         )
 
+    from contextlib import contextmanager
+
+    @contextmanager
+    def scalar_and_modules():
+        # MOD-01: el módulo de contratos se considera activo; el motor de módulos
+        # tiene sus propias pruebas (tests/test_mod01_modules.py).
+        with patch("app.security.db.session.scalar", side_effect=scalar), \
+                patch("app.services.capability_service.can_access_module", return_value=None):
+            yield
+
     return (
         patch(
             "app.security.db.session.get",
             return_value=user,
         ),
-        patch(
-            "app.security.db.session.scalar",
-            side_effect=scalar,
-        ),
+        scalar_and_modules(),
     )
 
 

@@ -35,6 +35,8 @@ PLATFORM_ROLE_PERMISSIONS = {
         "platform.roles.manage_admins", "platform.roles.manage_promoters",
         "platform.roles.transfer_owner", "platform.plans.manage", "platform.orgs.manage",
         "platform.billing.operate", "platform.catalog.manage", "platform.audit.read",
+        # MOD-01: activación progresiva (feature flags).
+        "platform.flags.manage",
     }),
     "platform_admin": frozenset({
         "platform.roles.manage_promoters", "platform.orgs.manage", "platform.billing.operate",
@@ -80,8 +82,24 @@ def _client_ip():
         return None
 
 
+def _correlation_id():
+    try:
+        from flask import g
+        if not hasattr(g, "correlation_id"):
+            import uuid
+            import re
+            supplied = re.sub(r"[^A-Za-z0-9_.-]", "", request.headers.get("X-Request-ID") or "")[:64]
+            g.correlation_id = supplied or uuid.uuid4().hex
+        return g.correlation_id
+    except RuntimeError:
+        return None
+
+
 def record_audit(actor_id, action, *, tenant_id=None, target_type=None, target_id=None,
                  details=None, commit=False):
+    correlation = _correlation_id()
+    if correlation:
+        details = {**(details or {}), "correlation_id": correlation}
     db.session.add(AuditEvent(
         actor_user_id=actor_id, action=action, scope_type="tenant" if tenant_id else "platform",
         tenant_id=tenant_id, target_type=target_type,
@@ -426,6 +444,8 @@ def create_organization(actor_id, name, slug, owner_email):
     db.session.flush()
     from app.services.members_service import ensure_owner_role
     ensure_owner_role(tenant.id)
+    from app.services.capability_service import initialize_tenant
+    initialize_tenant(tenant.id)
     token = secrets.token_urlsafe(32)
     days = int(current_app.config.get("INVITATION_TTL_DAYS", 7))
     from app.services.members_service import _token_hash as member_token_hash

@@ -579,10 +579,23 @@ def network_offer_dict(offer, tenant, categories):
     return data
 
 
-def list_network(tenant_id, *, category_id=None, search=None, page=1, per_page=50):
-    """Ofertas compartidas y publicadas de las demás organizaciones activas."""
+def list_network(tenant_id, *, category_id=None, search=None, page=1, per_page=50, business_type=None):
+    """Ofertas compartidas y publicadas de las demás organizaciones activas.
+
+    MOD-01: se excluyen organizaciones con la red deshabilitada y se puede filtrar por
+    giro comercial de la organización proveedora (sin exponer otros datos).
+    """
+    from app.models.modules import BusinessType, TenantBusinessType, TenantModule
     categories = {c.id: c for c in db.session.scalars(select(CatalogCategory)).all()}
-    query = _network_offers_query().where(CatalogOffer.tenant_id != tenant_id).order_by(CatalogOffer.name)
+    network_off = select(TenantModule.tenant_id).where(TenantModule.module_code == "ORGANIZATION_NETWORK",
+                                                       TenantModule.state == "disabled")
+    query = (_network_offers_query().where(CatalogOffer.tenant_id != tenant_id,
+                                           CatalogOffer.tenant_id.notin_(network_off))
+             .order_by(CatalogOffer.name))
+    if business_type:
+        query = query.where(CatalogOffer.tenant_id.in_(
+            select(TenantBusinessType.tenant_id).join(BusinessType, BusinessType.id == TenantBusinessType.business_type_id)
+            .where(BusinessType.code == business_type, BusinessType.is_internal.is_(False))))
     if category_id is not None:
         wanted = {cid for cid, c in categories.items() if cid == category_id or c.parent_id == category_id}
         query = query.where(CatalogOffer.category_id.in_(wanted))
@@ -592,7 +605,19 @@ def list_network(tenant_id, *, category_id=None, search=None, page=1, per_page=5
         query = query.where(or_(CatalogOffer.name.like(like), CatalogOffer.description.like(like),
                                 Tenant.name.like(like)))
     rows = db.session.execute(query.limit(500)).all()
-    items = [network_offer_dict(o, t, categories) for o, t in rows]
+    supplier_ids = {t.id for _, t in rows}
+    types_by_tenant = {}
+    if supplier_ids:
+        for tenant_id_, name in db.session.execute(
+                select(TenantBusinessType.tenant_id, BusinessType.name)
+                .join(BusinessType, BusinessType.id == TenantBusinessType.business_type_id)
+                .where(TenantBusinessType.tenant_id.in_(supplier_ids), BusinessType.is_internal.is_(False))).all():
+            types_by_tenant.setdefault(tenant_id_, []).append(name)
+    items = []
+    for o, t in rows:
+        data = network_offer_dict(o, t, categories)
+        data["supplier_business_types"] = sorted(types_by_tenant.get(t.id, []))
+        items.append(data)
     start = (page - 1) * per_page
     return len(items), items[start:start + per_page]
 
@@ -601,7 +626,11 @@ def build_network_item(tenant_id, network_offer_id, item, index):
     """Partida que presta otra organización. Siempre requiere su confirmación."""
     if isinstance(network_offer_id, bool) or not isinstance(network_offer_id, int) or network_offer_id <= 0:
         raise CatalogError("invalid_network_offer_id", 422)
-    row = db.session.execute(_network_offers_query().where(CatalogOffer.id == network_offer_id)).first()
+    from app.models.modules import TenantModule
+    network_off = select(TenantModule.tenant_id).where(TenantModule.module_code == "ORGANIZATION_NETWORK",
+                                                       TenantModule.state == "disabled")
+    row = db.session.execute(_network_offers_query().where(
+        CatalogOffer.id == network_offer_id, CatalogOffer.tenant_id.notin_(network_off))).first()
     if row is None or row[0].tenant_id == tenant_id:
         raise CatalogError("network_offer_not_found", 404, item=index)
     offer, supplier = row
