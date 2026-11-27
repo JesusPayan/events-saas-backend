@@ -4,7 +4,7 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y 
 La versión técnica **1.1.0** corresponde al lanzamiento comercial **EasiAcc Events 1.0**.
 Los PR citados son del repositorio backend salvo que se indique `frontend#`.
 
-## [Sin publicar]
+## [1.2.0] — 2026-11-27
 
 ### Seguridad
 - Dependencias actualizadas por vulnerabilidades conocidas (`pip-audit`): Flask 3.1.3, Werkzeug 3.1.9,
@@ -18,22 +18,30 @@ Los PR citados son del repositorio backend salvo que se indique `frontend#`.
 - **Catálogo de productos y servicios** (CAT-01): categorías globales con subcategorías, proveedores por organización,
   ofertas con modalidad de precio y tipo de confirmación, partidas mixtas en cotizaciones con precio pendiente fuera
   del total, portal del proveedor y bloqueo de aceptación con pendientes.
-- Migración aditiva `c06000000001` y script `scripts.grant_platform_owner`.
 - **Catálogo compartido entre organizaciones** (NET-01, migración `c07000000001`): ofertas compartidas por elección,
   catálogo de la red, partidas de otra organización con costo y precio de venta, solicitudes recibidas con datos del
   evento y del cliente, confirmación exclusiva de la organización proveedora y auditoría.
+
+- Migraciones aditivas `c06000000001` y `c07000000001`; script `scripts.grant_platform_owner` para designar al primer
+  dueño de plataforma.
 
 ### Cambiado
 - Las organizaciones suspendidas responden `403 tenant_suspended`.
 - El panel global usa permisos de plataforma; `BILLING_OPERATOR_USER_IDS` se mantiene por compatibilidad.
 - `/auth/me` incluye `platform` y el estado de cada empresa; `/auth/permissions` incluye `provider_id`.
 
+## [1.1.2] — 2026-11-25
+
+Sin cambios en el backend; se publica con el mismo número que el frontend (el despliegue usa un único `RELEASE_TAG`).
+
+## [1.1.1] — 2026-11-25
+
 ### Documentación
 - `docs/PUESTA_EN_MARCHA.md`: pasos para correo transaccional, webhook de Mercado Pago, revisión legal, backups,
   restauración y monitoreo externo.
 - `deploy/LINODE.md` y ejemplos de configuración actualizados a `easiacc.com`, staging y `v1.1.0`.
 
-## [1.1.0] — EasiAcc Events 1.0 (versión candidata)
+## [1.1.0] — 2026-11-24 — EasiAcc Events 1.0
 
 ### Añadido
 - **Identidad EasiAcc Events** (BRAND-01, #45 / frontend#21): logos, favicon, manifiesto web, manual de marca
