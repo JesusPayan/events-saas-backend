@@ -110,6 +110,16 @@ def tenant_permission(permission):
             tenant_status = db.session.scalar(select(Tenant.status).where(Tenant.id == tenant_id))
             if tenant_status != 'active':
                 return jsonify(error='tenant_suspended'), 403
+            # MOD-01: módulo habilitado y dentro del plan (lecturas siempre permitidas
+            # para conservar el acceso a datos históricos).
+            from app.modules_registry import module_for_endpoint
+            module_code = module_for_endpoint(request.endpoint)
+            if module_code is not None:
+                from app.services.capability_service import SAFE_METHODS, can_access_module
+                denied = can_access_module(tenant_id, module_code,
+                                           write=request.method not in SAFE_METHODS)
+                if denied:
+                    return jsonify(error=denied, module=module_code), 403
             g.tenant_id = tenant_id
             g.membership = membership
             g.access_grant = grant

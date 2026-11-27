@@ -4,6 +4,28 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y 
 La versión técnica **1.1.0** corresponde al lanzamiento comercial **EasiAcc Events 1.0**.
 Los PR citados son del repositorio backend salvo que se indique `frontend#`.
 
+## [1.3.0] — Sin publicar
+
+### Añadido
+- **Perfiles de negocio y arquitectura modular** (MOD-01, migración `c08000000001`): 18 giros comerciales
+  con plantillas de módulos recomendados, registro de 16 módulos con dependencias y capacidades,
+  configuración por organización, módulos por plan (opcional) y bandera `modules.enforcement`.
+- `CapabilityService`: validación en servidor de cada escritura según el módulo
+  (`module_disabled`, `plan_upgrade_required`, `module_dependency_required`, `module_unavailable`).
+- Desactivación segura: nunca borra datos; se bloquea con operaciones en curso
+  (`module_has_active_operations`) o módulos dependientes.
+- API de onboarding (borrador, vista previa, completar idempotente) y administración de plataforma
+  (giros, plantillas versionadas, interruptor global, módulos por plan, banderas, adopción).
+- Filtro por giro en el catálogo de la red (`?business_type=`) y `supplier_business_types`.
+- Auditoría de giros, módulos, plantillas, planes y banderas con `correlation_id`.
+- Documentación: `docs/architecture/MOD-01-MODULAR-ARCHITECTURE.md`, `docs/api/MOD-01-API.md`,
+  `docs/security/MODULE-AUTHORIZATION.md`, `docs/operations/{MIGRATION,ROLLBACK}-v1.3.0.md`, `docs/qa/`, `docs/product/`.
+
+### Cambiado
+- Las organizaciones existentes quedan con perfil de compatibilidad y todos sus módulos activos (sin cambios visibles).
+- Las organizaciones nuevas inician con Contratos, Pagos y Catálogo hasta completar el asistente.
+- Partidas de inventario, catálogo o red en cotizaciones requieren el módulo activo.
+
 ## [1.2.0] — 2026-11-27
 
 ### Seguridad

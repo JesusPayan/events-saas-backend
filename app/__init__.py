@@ -360,6 +360,9 @@ def create_app(config_override=None):
     from app.api.catalog import bp as catalog_bp
     app.register_blueprint(platform_bp, url_prefix='/api/v1')
     app.register_blueprint(catalog_bp, url_prefix='/api/v1')
+    # MOD-01: giros comerciales, módulos y onboarding
+    from app.api.modules import bp as modules_bp
+    app.register_blueprint(modules_bp, url_prefix='/api/v1')
     # ==============================================
     # 10. INICIALIZAR EXTENSIONES
     # ==============================================

@@ -209,6 +209,20 @@ def validate_quote(data, tenant_id):
                 f"items[{index}]": "service_fields_require_offer"
             })
 
+        # MOD-01: las partidas solo pueden usar módulos activos para la organización.
+        from app.services.capability_service import can_access_module
+        needed = []
+        if item.get("item_type") == "inventory":
+            needed.append("INVENTORY")
+        if catalog_fields.get("offer_id"):
+            needed.append("COMMERCIAL_CATALOG")
+        if catalog_fields.get("network_offer_id"):
+            needed.append("ORGANIZATION_NETWORK")
+        for module_code in needed:
+            denied = can_access_module(tenant_id, module_code, write=True)
+            if denied:
+                raise QuoteValidationError({f"items[{index}]": denied, "module": module_code}, 403)
+
         item_type = item.get("item_type")
         if item_type not in ("inventory", "service", "custom"):
             raise QuoteValidationError({

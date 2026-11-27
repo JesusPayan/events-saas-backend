@@ -122,6 +122,10 @@ def register():
         )
         db.session.add(membership)
 
+        # MOD-01: módulos comunes y onboarding pendiente para la organización nueva.
+        from app.services.capability_service import initialize_tenant
+        initialize_tenant(tenant.id)
+
         # 6. Referido de un promotor (opcional; un código inválido no bloquea el alta)
         record_referral(tenant.id, email, referral_code)
 
